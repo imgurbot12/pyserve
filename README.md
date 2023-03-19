@@ -2,6 +2,12 @@ pyserve
 --------
 Unify SocketServer Implementations based on a Session Model
 
+### Install
+
+```bash
+pip install pyserve3
+```
+
 ### Example
 
 ```python
