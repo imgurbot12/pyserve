@@ -146,6 +146,7 @@ def listen_tcp_threaded(
     :param ssl:             TLS context to encrypt socket communications
     :param kwargs:          keyword arguments to pass to session factory
     """
+    factory.test_factory()
     server = TcpThreadServer(
         address=address, 
         factory=factory, 

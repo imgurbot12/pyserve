@@ -26,6 +26,9 @@ def new_handler(
     """
     spawn new request-handler class w/ configured settings
     """
+    # test factory generation
+    factory(*args, **kwargs)
+    # generate new request handler
     name = f'{base.__name__}Instance'
     return type(name, (base, ), dict(
         factory=factory,
@@ -164,12 +167,7 @@ class BaseThreadServer(socketserver.ThreadingMixIn):
         self.shutdown()
 
     def shutdown(self):
-        """override shutdown behavior"""
-        self.socket: socket.socket
-        self.server.shutdown(self) #pyright: ignore
-        self.socket.shutdown(socket.SHUT_RDWR)
-        self.socket.close()
-        self.server_close()
+        raise NotImplementedError
 
 @dataclass
 class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
@@ -182,6 +180,12 @@ class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
         super().__post_init__()
         if self.allow_broadcast:
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    
+    def shutdown(self):
+        """override shutdown behavior"""
+        self.server.shutdown(self)
+        self.socket.close()
+        self.server_close()
 
 @dataclass
 class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
@@ -195,3 +199,12 @@ class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
         super().__post_init__()
         if self.ssl:
             self.socket = wrap_socket(self.socket, server_side=True)
+
+    def shutdown(self):
+        """override shutdown behavior"""
+        self.socket: socket.socket
+        self.server.shutdown(self) #pyright: ignore
+        self.socket.shutdown(socket.SHUT_RDWR)
+        self.socket.close()
+        self.server_close()
+
