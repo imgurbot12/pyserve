@@ -103,7 +103,7 @@ class UdpHandler(BaseRequestHandler):
         self.sock    = self.request[1]
         self.writer: UdpWriter = UdpWriter(self.addr, self.sock)
         super().setup()
-
+    
     def handle(self):
         """handle single inbound udp packet"""
         try:
@@ -152,7 +152,7 @@ class BaseThreadServer(socketserver.ThreadingMixIn):
     def __post_init__(self):
         self.allow_reuse_port = self.reuse_port
         # build handler for base init
-        self.server.__init__(self, self.address, new_handler( #pyright: ignore
+        self.server.__init__(self, self.address, new_handler( #type: ignore
             base=self.handler, 
             factory=self.factory, 
             args=self.args, 
@@ -161,13 +161,20 @@ class BaseThreadServer(socketserver.ThreadingMixIn):
             interface=self.interface,
             blocksize=getattr(self, 'blocksize', 8192),
         ))
-    
+
     def __exit__(self, *_):
         """ensure server is shutdown properly"""
-        self.shutdown()
-
-    def shutdown(self):
-        raise NotImplementedError
+        self.shutdown() #type: ignore
+    
+    def get_request(self):
+        """respawn socket after socket error to prevent infinite hanging loop"""
+        try:
+            return self.server.get_request(self) #type: ignore
+        except socket.error as e:
+            self.socket.close()
+            self.socket = socket.socket(self.address_family, self.socket_type) #type: ignore
+            self.server.server_bind(self) #type: ignore
+            raise e
 
 @dataclass
 class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
@@ -180,7 +187,7 @@ class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
         super().__post_init__()
         if self.allow_broadcast:
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    
+
     def shutdown(self):
         """override shutdown behavior"""
         self.server.shutdown(self)
@@ -203,7 +210,7 @@ class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
     def shutdown(self):
         """override shutdown behavior"""
         self.socket: socket.socket
-        self.server.shutdown(self) #pyright: ignore
+        self.server.shutdown(self)
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
         self.server_close()
