@@ -19,8 +19,6 @@ def new_handler(
     factory:   Type[Session],
     args:      tuple           = (),
     kwargs:    Dict[str, Any]  = {},
-    timeout:   Optional[int]   = None,
-    interface: Optional[bytes] = None,
     blocksize: int             = 8192
 ) -> Type['BaseRequestHandler']:
     """
@@ -34,8 +32,6 @@ def new_handler(
         factory=factory,
         args=args,
         kwargs=kwargs,
-        timeout=timeout,
-        interface=interface,
         blocksize=blocksize,
     ))
 
@@ -76,17 +72,13 @@ class BaseRequestHandler(socketserver.BaseRequestHandler):
     factory:   Type[Session]
     args:      tuple           
     kwargs:    Dict[str, Any]
-    timeout:   Optional[int]
-    interface: Optional[bytes]
     blocksize: int
 
     def setup(self):
         """configure and generate session w/ information collected"""
         self.addr:   Address = Address(*self.client_address)
-        self.sock:   socket.socket
         self.writer: Writer
         self.error:  Optional[Exception] = None
-        modify_socket(self.sock, self.timeout, self.interface)
         # spawn session object
         self.session = self.factory(*self.args, **self.kwargs)
         self.session.connection_made(self.addr, self.writer)
@@ -138,80 +130,97 @@ class TcpHandler(BaseRequestHandler):
 
 @dataclass
 class BaseThreadServer(socketserver.ThreadingMixIn):
-    server:    ClassVar[Type[socketserver.BaseServer]]
-    handler:   ClassVar[Type[BaseRequestHandler]]
+    handler: ClassVar[Type[BaseRequestHandler]]
 
     address:    RawAddr
     factory:    Type[Session]
     args:       tuple           = field(default_factory=tuple)
     kwargs:     Dict[str, Any]  = field(default_factory=dict)
-    timeout:    Optional[int]   = None
     interface:  Optional[bytes] = None
     reuse_port: bool            = False
-    
+    blocksize: int              = 8192
+ 
     def __post_init__(self):
+        self.max_packet_size  = self.blocksize
         self.allow_reuse_port = self.reuse_port
-        # build handler for base init
-        self.server.__init__(self, self.address, new_handler( #type: ignore
+
+    def new_handler(self) -> Type[BaseRequestHandler]:
+        return new_handler(
             base=self.handler, 
             factory=self.factory, 
             args=self.args, 
             kwargs=self.kwargs,
-            timeout=self.timeout,
-            interface=self.interface,
-            blocksize=getattr(self, 'blocksize', 8192),
-        ))
+            blocksize=self.blocksize,
+        )
 
-    def __exit__(self, *_):
-        """ensure server is shutdown properly"""
-        self.shutdown() #type: ignore
-    
-    def get_request(self):
-        """respawn socket after socket error to prevent infinite hanging loop"""
-        try:
-            return self.server.get_request(self) #type: ignore
-        except socket.error as e:
-            self.socket.close()
-            self.socket = socket.socket(self.address_family, self.socket_type) #type: ignore
-            self.server.server_bind(self) #type: ignore
-            raise e
+    def rebuild_socket(self, s: socketserver.BaseServer):
+        """rebuild socket to recover from socket failure"""
+        s.socket.close()
+        s.socket = socket.socket(s.address_family, s.socket_type)
+        s.server_bind()
 
 @dataclass
 class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
-    server  = socketserver.UDPServer
     handler = UdpHandler
 
     allow_broadcast: bool = False
 
-    def __post_init__(self):
-        super().__post_init__()
+    def __exit__(self, *_):
+        self.shutdown()
+
+    def server_bind(self):
+        """additional socket modification controls on server-bind"""
+        super().server_bind()
+        modify_socket(self.socket, None, self.interface)
         if self.allow_broadcast:
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
+    def get_request(self):
+        """respawn socket after socket error to prevent infinite hanging loop"""
+        try:
+            return super().get_request()
+        except socket.error as e:
+            self.rebuild_socket(self)
+            raise e
+
     def shutdown(self):
         """override shutdown behavior"""
-        self.server.shutdown(self)
+        super().shutdown()
         self.socket.close()
         self.server_close()
 
 @dataclass
 class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
-    server  = socketserver.TCPServer
     handler = TcpHandler
 
-    ssl:       Optional[SSLContext] = None
-    blocksize: int                  = 8192
-    
-    def __post_init__(self):
-        super().__post_init__()
+    ssl:     Optional[SSLContext] = None
+    timeout: Optional[int]        = None
+ 
+    def __exit__(self, *_):
+        self.shutdown()
+ 
+    def server_bind(self):
+        """additional socket modification controls on server-bind"""
+        super().server_bind()
+        modify_socket(self.socket, None, self.interface)
         if self.ssl:
             self.socket = wrap_socket(self.socket, server_side=True)
 
+    def get_request(self):
+        """respawn socket after socket error to prevent infinite hanging loop"""
+        try:
+            sock, addr = super().get_request()
+            modify_socket(sock, self.timeout, None)
+            return (sock, addr)
+        except socket.timeout as e:
+            raise e
+        except socket.error as e:
+            self.rebuild_socket(self)
+            raise e
+
     def shutdown(self):
         """override shutdown behavior"""
-        self.socket: socket.socket
-        self.server.shutdown(self)
+        super().shutdown()
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
         self.server_close()
-

@@ -5,7 +5,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Type, Optional, Dict, Any
 
-from .abc import RawAddr, Address, Writer, Session, modify_socket
+from .abc import RawAddr, Address, Writer, Session
 
 #** Variables **#
 __all__ = ['UdpProtocol', 'TcpProtocol']
@@ -31,8 +31,6 @@ class BaseProtocol:
     factory:   Type[Session]
     args:      tuple           = field(default_factory=tuple)
     kwargs:    Dict[str, Any]  = field(default_factory=dict)
-    timeout:   Optional[int]   = None
-    interface: Optional[bytes] = None
 
     def test_factory(self):
         """validate session can be generated w/ args and kwargs"""
@@ -53,13 +51,9 @@ class UdpProtocol(BaseProtocol, asyncio.DatagramTransport):
  
     def connection_made(self, transport: asyncio.DatagramTransport):
         """"""
-        self.transport = transport
         # handle modifying socket and making changes for handling
-        socket = transport.get_extra_info('socket')
-        modify_socket(socket, None, self.interface)
-        if self.timeout is not None:
-            self.set_timeout(self.timeout, transport) #pyright: ignore
-       
+        self.transport = transport
+ 
     def datagram_received(self, data: bytes, addr: RawAddr):
         """"""
         # generate session w/ attributes and notify on connection-made
@@ -73,15 +67,15 @@ class UdpProtocol(BaseProtocol, asyncio.DatagramTransport):
         """"""
         self.session.connection_lost(err)
 
+@dataclass
 class TcpProtocol(BaseProtocol, asyncio.Protocol):
+    timeout: Optional[int] = None
    
     def connection_made(self, transport: asyncio.Transport):
         """"""
         # collect attributes and prepare socket for session
         address = Address(*transport.get_extra_info('peername'))
-        socket  = transport.get_extra_info('socket')
         # handle modifying socket and making changes for handling
-        modify_socket(socket, None, self.interface)
         if self.timeout is not None:
             self.set_timeout(self.timeout, transport)
         # generate session w/ attributes and notify on connection-made

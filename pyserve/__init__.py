@@ -5,7 +5,7 @@ import asyncio
 from ssl import SSLContext
 from typing import Type, Optional
 
-from .abc import RawAddr, Address, Writer, Session
+from .abc import RawAddr, Address, Writer, Session, modify_socket
 from .transport import UdpProtocol, TcpProtocol
 from .threading import UdpThreadServer, TcpThreadServer
 
@@ -27,7 +27,6 @@ async def listen_udp_async(
     address:         RawAddr, 
     factory:         Type[Session],
     *args,
-    timeout:         Optional[int]   = None,
     interface:       Optional[bytes] = None,
     reuse_port:      bool            = False,
     allow_broadcast: bool            = False,
@@ -37,7 +36,6 @@ async def listen_udp_async(
     :param address:         host/port of server
     :param factory:         type factory for server request handler
     :param args:            positional args to pass to the session factory
-    :param timeout:         max socket lifetime duration timeout if configured
     :param interface:       interface to bind server socket to
     :param reuse_port:      allow reuse of same port when enabled
     :param allow_broadcast: allow for udp broadcast messages when enabled
@@ -45,11 +43,15 @@ async def listen_udp_async(
     """
     # spawn protocol factory and test session generation
     loop = asyncio.get_running_loop()
-    func = lambda: UdpProtocol(factory, args, kwargs, timeout, interface)
+    func = lambda: UdpProtocol(factory, args, kwargs)
     func().test_factory()
     # spawn server instance
-    tport, _ = await loop.create_datagram_endpoint(func, address, 
+    tport, protocol = await loop.create_datagram_endpoint(func, address, 
         reuse_port=reuse_port, allow_broadcast=allow_broadcast)
+    # modify transport interface when enabled
+    if interface:
+        sock = protocol.transport.get_extra_info('socket')
+        modify_socket(sock, None, interface)
     # run server forever
     try:
         while True:
@@ -81,12 +83,16 @@ async def listen_tcp_async(
     """
     # spawn protocol factory and test session generation
     loop = asyncio.get_running_loop()
-    func = lambda: TcpProtocol(factory, args, kwargs, timeout, interface)
+    func = lambda: TcpProtocol(factory, args, kwargs, timeout)
     func().test_factory()
     # spawn server instance
     host, port = address
     server = await loop.create_server(func, host, port, 
         reuse_port=reuse_port, backlog=backlog, ssl=ssl)
+    # modify interface settings for sockets (when enabled)
+    if interface:
+        for sock in server.sockets:
+            modify_socket(sock, None, interface)
     # run server forever
     async with server:
         await server.serve_forever()
@@ -95,7 +101,6 @@ def listen_udp_threaded(
     address:         RawAddr, 
     factory:         Type[Session],
     *args,
-    timeout:         Optional[int]   = None,
     interface:       Optional[bytes] = None,
     reuse_port:      bool            = False,
     allow_broadcast: bool            = False,
@@ -111,12 +116,12 @@ def listen_udp_threaded(
     :param allow_broadcast: allow for udp broadcast messages when enabled
     :param kwargs:          keyword arguments to pass to session factory
     """
+    factory(*args, **kwargs)
     server = UdpThreadServer(
         address=address, 
         factory=factory, 
         args=args, 
         kwargs=kwargs, 
-        timeout=timeout, 
         interface=interface, 
         reuse_port=reuse_port, 
         allow_broadcast=allow_broadcast,
@@ -146,7 +151,7 @@ def listen_tcp_threaded(
     :param ssl:             TLS context to encrypt socket communications
     :param kwargs:          keyword arguments to pass to session factory
     """
-    factory.test_factory()
+    factory(*args, **kwargs)
     server = TcpThreadServer(
         address=address, 
         factory=factory, 
