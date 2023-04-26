@@ -164,6 +164,10 @@ class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
     handler = UdpHandler
 
     allow_broadcast: bool = False
+ 
+    def __post_init__(self):
+        super().__post_init__()
+        socketserver.UDPServer.__init__(self, self.address, self.new_handler())
 
     def __exit__(self, *_):
         self.shutdown()
@@ -196,6 +200,10 @@ class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
     ssl:     Optional[SSLContext] = None
     timeout: Optional[int]        = None
  
+    def __post_init__(self):
+        super().__post_init__()
+        socketserver.TCPServer.__init__(self, self.address, self.new_handler())
+
     def __exit__(self, *_):
         self.shutdown()
  
