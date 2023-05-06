@@ -4,15 +4,17 @@
 import socket
 from abc import abstractmethod
 from collections import namedtuple
-from typing import Tuple, Protocol, Optional
+from typing import Tuple, Protocol, Optional, Union
 
 #** Variables **#
 __all__ = [
     'modify_socket',
 
     'RawAddr',
-    'Address', 
-    'Writer', 
+    'Address',
+    'AnyAddr',
+    'Writer',
+    'UdpWriter',
     'Session',
 ]
 
@@ -21,6 +23,9 @@ RawAddr = Tuple[str, int]
 
 #: named address tuple
 Address = namedtuple('Address', ('host', 'port'))
+
+#: any address tuple
+AnyAddr = Union[RawAddr, Address]
 
 #** Functions **#
 
@@ -47,6 +52,23 @@ class Writer(Protocol):
 
     @abstractmethod
     def write(self, data: bytes):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def close(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def is_closing(self) -> bool:
+        raise NotImplementedError
+
+class UdpWriter(Writer, Protocol):
+    """
+    abstract data-writing implementation for udp server connection
+    """
+
+    @abstractmethod
+    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
         raise NotImplementedError
     
     @abstractmethod

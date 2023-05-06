@@ -7,7 +7,7 @@ from ssl import SSLContext, wrap_socket
 from dataclasses import dataclass, field
 from typing import Type, Optional, Dict, Any, ClassVar
 
-from .abc import RawAddr, Address, Writer, Session, modify_socket
+from .abc import *
 
 #** Variables **#
 __all__ = ['UdpThreadServer', 'TcpThreadServer']
@@ -38,12 +38,12 @@ def new_handler(
 #** Classes **#
 
 @dataclass
-class UdpWriter(Writer):
+class UdpWriter(UdpWriter):
     addr: Address
     sock: socket.socket
     closing: bool = False
-    
-    def write(self, data: bytes, addr: Optional[Address] = None):
+
+    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
         self.sock.sendto(data, addr or self.addr)
 
     def close(self):

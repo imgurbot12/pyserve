@@ -5,7 +5,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Type, Optional, Dict, Any
 
-from .abc import RawAddr, Address, Writer, Session
+from .abc import * 
 
 #** Variables **#
 __all__ = ['UdpProtocol', 'TcpProtocol']
@@ -13,11 +13,11 @@ __all__ = ['UdpProtocol', 'TcpProtocol']
 #** Classes **#
 
 @dataclass
-class UdpWriter(Writer):
+class UdpWriter(UdpWriter):
     addr:      Address
     transport: asyncio.DatagramTransport
-    
-    def write(self, data: bytes, addr: Optional[Address] = None):
+
+    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
         self.transport.sendto(data, addr or self.addr)
 
     def close(self):
