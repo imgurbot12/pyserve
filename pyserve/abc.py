@@ -32,7 +32,7 @@ AnyAddr = Union[RawAddr, Address]
 def modify_socket(
     sock:      socket.socket, 
     timeout:   Optional[int], 
-    interface: Optional[bytes]
+    interface: Optional[str]
 ) -> socket.socket:
     """
     modify the socket object w/ the following options
@@ -40,7 +40,8 @@ def modify_socket(
     if timeout is not None:
         sock.settimeout(timeout)
     if interface is not None:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface)
+        iface = interface.encode()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, iface)
     return sock 
 
 #** Classes **#

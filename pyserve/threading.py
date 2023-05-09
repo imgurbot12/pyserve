@@ -3,7 +3,7 @@ Threading Implementations of session-based servers
 """
 import socket
 import socketserver
-from ssl import SSLContext, wrap_socket
+from ssl import SSLContext
 from dataclasses import dataclass, field
 from typing import Type, Optional, Dict, Any, ClassVar
 
@@ -134,11 +134,11 @@ class BaseThreadServer(socketserver.ThreadingMixIn):
 
     address:    RawAddr
     factory:    Type[Session]
-    args:       tuple           = field(default_factory=tuple)
-    kwargs:     Dict[str, Any]  = field(default_factory=dict)
-    interface:  Optional[bytes] = None
-    reuse_port: bool            = False
-    blocksize: int              = 8192
+    args:       tuple          = field(default_factory=tuple)
+    kwargs:     Dict[str, Any] = field(default_factory=dict)
+    interface:  Optional[str]  = None
+    reuse_port: bool           = False
+    blocksize: int             = 8192
  
     def __post_init__(self):
         self.max_packet_size  = self.blocksize
@@ -212,7 +212,7 @@ class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
         super().server_bind()
         modify_socket(self.socket, None, self.interface)
         if self.ssl:
-            self.socket = wrap_socket(self.socket, server_side=True)
+            self.socket = self.ssl.wrap_socket(self.socket, server_side=True)
 
     def get_request(self):
         """respawn socket after socket error to prevent infinite hanging loop"""
