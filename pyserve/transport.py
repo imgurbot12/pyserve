@@ -2,8 +2,10 @@
 AsyncIO Implementations of session-based servers
 """
 import asyncio
-from dataclasses import dataclass, field
-from typing import Type, Optional, Dict, Any
+from ssl import SSLContext
+from typing import Type, Optional, Dict, Any, Protocol
+
+from pyderive import dataclass, field
 
 from .abc import * 
 
@@ -12,19 +14,49 @@ __all__ = ['UdpProtocol', 'TcpProtocol']
 
 #** Classes **#
 
-@dataclass
-class UdpWriter(UdpWriter):
-    addr:      Address
-    transport: asyncio.DatagramTransport
+class BaseWriter(Writer, Protocol):
+    transport: asyncio.Transport
+ 
+    def using_tls(self) -> bool:
+        return 'ssl' in self.transport.__class__.__name__.lower()
 
-    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
-        self.transport.sendto(data, addr or self.addr)
+    def start_tls(self, context: SSLContext):
+        protocol  = self.transport.get_protocol()
+        loop      = asyncio.get_event_loop()
+        future    = loop.start_tls(
+            transport=self.transport,
+            protocol=protocol,
+            sslcontext=context,
+            server_side=True,
+        )
+        def callback(task: asyncio.Task):
+            self.transport = task.result()
+        task = loop.create_task(future)
+        task.add_done_callback(callback)
 
     def close(self):
         self.transport.close()
 
     def is_closing(self) -> bool:
         return self.transport.is_closing()
+
+@dataclass(slots=True)
+class UdpWriter(UdpWriter, BaseWriter):
+    addr:      Address
+    transport: asyncio.DatagramTransport 
+ 
+    def start_tls(self, context: SSLContext):
+        raise NotImplementedError('Cannot Use SSL over UDP')
+
+    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
+        self.transport.sendto(data, addr or self.addr)
+
+@dataclass(slots=True)
+class TcpWriter(BaseWriter):
+    transport: asyncio.Transport 
+
+    def write(self, data: bytes):
+        self.transport.write(data)
 
 @dataclass
 class BaseProtocol:
@@ -80,7 +112,7 @@ class TcpProtocol(BaseProtocol, asyncio.Protocol):
             self.set_timeout(self.timeout, transport)
         # generate session w/ attributes and notify on connection-made
         self.session = self.factory(*self.args, **self.kwargs)
-        self.session.connection_made(address, transport)
+        self.session.connection_made(address, TcpWriter(transport))
 
     def data_received(self, data: bytes):
         """"""

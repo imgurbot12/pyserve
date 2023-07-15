@@ -5,7 +5,7 @@ with open('README.md', 'r') as f:
 
 setup(
     name='pyserve3',
-    version='0.0.6',
+    version='0.0.7',
     license='MIT',
     packages=find_packages(),
     url='https://github.com/imgurbot12/pyserve',

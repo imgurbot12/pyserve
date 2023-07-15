@@ -3,9 +3,10 @@ Threading Implementations of session-based servers
 """
 import socket
 import socketserver
-from ssl import SSLContext
-from dataclasses import dataclass, field
-from typing import Type, Optional, Dict, Any, ClassVar
+from ssl import SSLContext, SSLSocket
+from typing import Type, Optional, Dict, Any, ClassVar, Protocol
+
+from pyderive import dataclass, field
 
 from .abc import *
 
@@ -37,36 +38,42 @@ def new_handler(
 
 #** Classes **#
 
-@dataclass
-class UdpWriter(UdpWriter):
-    addr: Address
-    sock: socket.socket
-    closing: bool = False
+class BaseWriter(Writer, Protocol):
+    sock:    socket.socket
+    closing: bool
+    
+    def using_tls(self) -> bool:
+        return isinstance(self.sock, SSLSocket)
 
-    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
-        self.sock.sendto(data, addr or self.addr)
+    def start_tls(self, context: SSLContext):
+        self.sock = context.wrap_socket(self.sock, server_side=True)
 
     def close(self):
-        self.sock.close()
         self.closing = True
+        self.sock.close()
 
     def is_closing(self) -> bool:
         return self.closing
 
-@dataclass
-class TcpWriter(Writer):
+@dataclass(slots=True)
+class UdpWriter(UdpWriter, BaseWriter):
+    addr: Address
+    sock: socket.socket
+    closing: bool = False
+    
+    def start_tls(self, context: SSLContext):
+        raise NotImplementedError('Cannot Use SSL over UDP')
+
+    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
+        self.sock.sendto(data, addr or self.addr)
+
+@dataclass(slots=True)
+class TcpWriter(BaseWriter):
     sock: socket.socket
     closing: bool = False
 
     def write(self, data: bytes):
         self.sock.sendall(data)
-
-    def close(self):
-        self.closing = True
-        self.sock.close()
-
-    def is_closing(self) -> bool:
-        return self.closing
 
 class BaseRequestHandler(socketserver.BaseRequestHandler):
     factory:   Type[Session]
@@ -82,20 +89,20 @@ class BaseRequestHandler(socketserver.BaseRequestHandler):
         # spawn session object
         self.session = self.factory(*self.args, **self.kwargs)
         self.session.connection_made(self.addr, self.writer)
-    
+ 
     def finish(self):
         """notify that connection disconnected"""
         self.session.connection_lost(self.error)
 
 class UdpHandler(BaseRequestHandler):
-    
+ 
     def setup(self):
         """handle connection spawn"""
         self.addr    = Address(*self.client_address) 
         self.sock    = self.request[1]
         self.writer: UdpWriter = UdpWriter(self.addr, self.sock)
         super().setup()
-    
+ 
     def handle(self):
         """handle single inbound udp packet"""
         try:
@@ -118,7 +125,7 @@ class TcpHandler(BaseRequestHandler):
         """handle subsequent reads of inbound data"""
         while not self.writer.closing:
             try:
-                data = self.sock.recv(self.blocksize)
+                data = self.writer.sock.recv(self.blocksize)
                 if not data:
                     break
                 self.session.data_recieved(data)
@@ -141,6 +148,7 @@ class BaseThreadServer(socketserver.ThreadingMixIn):
     blocksize: int             = 8192
  
     def __post_init__(self):
+        self.daemon_threads   = True
         self.max_packet_size  = self.blocksize
         self.allow_reuse_port = self.reuse_port
 
@@ -186,10 +194,20 @@ class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
         except socket.error as e:
             self.rebuild_socket(self)
             raise e
+ 
+    def serve_forever(self, poll_interval: float = 0.5):
+        """
+        polls server forever until its closed by something else
 
-    def shutdown(self):
+        :param poll_interval: how often server polls for close
+        """
+        try:
+            return super().serve_forever(poll_interval)
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
         """override shutdown behavior"""
-        super().shutdown()
         self.socket.close()
         self.server_close()
 
@@ -225,10 +243,20 @@ class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
         except socket.error as e:
             self.rebuild_socket(self)
             raise e
+ 
+    def serve_forever(self, poll_interval: float = 0.5):
+        """
+        polls server forever until its closed by something else
 
-    def shutdown(self):
+        :param poll_interval: how often server polls for close
+        """
+        try:
+            return super().serve_forever(poll_interval)
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
         """override shutdown behavior"""
-        super().shutdown()
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
         self.server_close()

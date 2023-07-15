@@ -2,6 +2,7 @@
 
 """
 import socket
+from ssl import SSLContext
 from abc import abstractmethod
 from collections import namedtuple
 from typing import Tuple, Protocol, Optional, Union
@@ -50,6 +51,14 @@ class Writer(Protocol):
     """
     abstract data-writing implementation for single server connection
     """
+    
+    @abstractmethod
+    def using_tls(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def start_tls(self, context: SSLContext):
+        raise NotImplementedError
 
     @abstractmethod
     def write(self, data: bytes):
@@ -58,7 +67,7 @@ class Writer(Protocol):
     @abstractmethod
     def close(self):
         raise NotImplementedError
-
+ 
     @abstractmethod
     def is_closing(self) -> bool:
         raise NotImplementedError
@@ -70,14 +79,6 @@ class UdpWriter(Writer, Protocol):
 
     @abstractmethod
     def write(self, data: bytes, addr: Optional[AnyAddr] = None):
-        raise NotImplementedError
-    
-    @abstractmethod
-    def close(self):
-        raise NotImplementedError
-
-    @abstractmethod
-    def is_closing(self) -> bool:
         raise NotImplementedError
 
 class Session(Protocol):
