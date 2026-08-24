@@ -16,9 +16,10 @@ __all__ = [
     'listen_tcp_threaded',
 
     'Address',
-    'Writer',
-    'UdpWriter',
+    'RawAddr',
     'Session',
+    'UdpWriter',
+    'Writer',
 
     'UdpThreadServer',
     'TcpThreadServer',

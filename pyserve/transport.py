@@ -121,9 +121,10 @@ class UdpAsyncProtocol(BaseProtocol, asyncio.DatagramProtocol):
     """
     Udp async server protocol handler
     """
+    transport: asyncio.DatagramTransport
 
-    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        self.transport = transport
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self.transport = cast(asyncio.DatagramTransport, transport)
 
     def datagram_received(self, data: bytes, addr: RawAddr) -> None:
         address      = Address(*addr)
@@ -269,7 +270,7 @@ class TcpAsyncServer:
     ssl:              Optional[SSLContext]
     allow_reuse_port: bool
 
-    _server: Optional['asyncio.Server']
+    _server: Optional[Any]
 
     def __init__(self,
         address:    RawAddr,
@@ -301,7 +302,7 @@ class TcpAsyncServer:
             await self._server.__aexit__(*args)
         self.stop()
 
-    async def _start(self) -> 'asyncio.Server':
+    async def _start(self) -> Any:
         """
         spawn asyncio tcp server instance or return running one
         """

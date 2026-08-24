@@ -4,7 +4,7 @@ PyServe Async Transport Server UnitTests
 import asyncio
 import json
 import socket
-from typing import Any, Dict, Generic, Optional, Type, TypeVar, Union
+from typing import Any, Dict, Generic, Optional, Type, TypeVar, Union, cast
 from unittest import IsolatedAsyncioTestCase
 
 from . import ArgsSession, EchoSession, random_port
@@ -47,7 +47,7 @@ class AsyncTests(IsolatedAsyncioTestCase, Generic[S]):
         if isinstance(server, TcpAsyncServer):
             loop = asyncio.get_running_loop()
             await loop.sock_connect(self.client, addr)
-        return server
+        return cast(S, server)
 
     async def asyncSetUp(self) -> None:
         asyncio.get_running_loop().set_debug(False)

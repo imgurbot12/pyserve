@@ -4,7 +4,7 @@ PyServe Threading Server UnitTests
 import json
 import socket
 import threading
-from typing import Any, Dict, Generic, Optional, Type, TypeVar, Union
+from typing import Any, Dict, Generic, Optional, Type, TypeVar, Union, cast
 from unittest import TestCase
 
 from . import ArgsSession, EchoSession, random_port
@@ -48,9 +48,9 @@ class ThreadTests(TestCase, Generic[S]):
         self.client.settimeout(0.25)
         if isinstance(server, TcpThreadServer):
             self.client.connect(addr)
-        return server
+        return cast(S, server)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         client: Optional[socket.socket] = getattr(self, 'client', None)
         server: Optional[S] = getattr(self, 'server', None)
         thread: Optional[threading.Thread] = getattr(self, 'thread', None)
