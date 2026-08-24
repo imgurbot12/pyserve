@@ -1,6 +1,6 @@
 pyserve
 --------
-Unify SocketServer Implementations based on a Session Model
+Unify socket server implementations using session-based model
 
 ### Install
 
@@ -15,7 +15,7 @@ from pyserve import *
 from typing import Optional
 
 class EchoServer(Session):
-    
+
     def connection_made(self, addr: Address, writer: Writer):
         print('connection made!', addr, writer)
         self.addr   = addr

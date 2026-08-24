@@ -1,13 +1,12 @@
 """
-Unify SocketServer Implementations based on Session Model
+Unify socket server implementations using session-based model
 """
-import asyncio
 from ssl import SSLContext
-from typing import Type, Optional
+from typing import Any, Dict, Optional, Tuple, Type
 
-from .abc import * 
-from .transport import UdpProtocol, TcpProtocol
+from .abc import Address, RawAddr, Session, UdpWriter, Writer
 from .threading import UdpThreadServer, TcpThreadServer
+from .transport import UdpAsyncServer, TcpAsyncServer
 
 #** Variables **#
 __all__ = [
@@ -20,151 +19,109 @@ __all__ = [
     'Writer',
     'UdpWriter',
     'Session',
+
+    'UdpThreadServer',
+    'TcpThreadServer',
+    'UdpAsyncServer',
+    'TcpAsyncServer',
 ]
 
 #** Functions **#
 
 async def listen_udp_async(
-    address:         RawAddr, 
+    address:         RawAddr,
     factory:         Type[Session],
-    *args,
-    interface:       Optional[str] = None,
-    reuse_port:      bool          = False,
-    allow_broadcast: bool          = False,
-    **kwargs,
-):
+    args:            Optional[Tuple[Any, ...]] = None,
+    kwargs:          Optional[Dict[str, Any]]  = None,
+    interface:       Optional[str]             = None,
+    reuse_port:      bool                      = False,
+    allow_broadcast: bool                      = False,
+) -> None:
     """
-    :param address:         host/port of server
-    :param factory:         type factory for server request handler
-    :param args:            positional args to pass to the session factory
-    :param interface:       interface to bind server socket to
-    :param reuse_port:      allow reuse of same port when enabled
-    :param allow_broadcast: allow for udp broadcast messages when enabled
-    :param kwargs:          keyword arguments to pass to session factory
     """
-    # spawn protocol factory and test session generation
-    loop = asyncio.get_running_loop()
-    func = lambda: UdpProtocol(factory, args, kwargs)
-    func().test_factory()
-    # spawn server instance
-    tport, protocol = await loop.create_datagram_endpoint(func, address, 
-        reuse_port=reuse_port, allow_broadcast=allow_broadcast)
-    # modify transport interface when enabled
-    if interface:
-        sock = protocol.transport.get_extra_info('socket')
-        modify_socket(sock, None, interface)
-    # run server forever
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    finally:
-        tport.close()
+    async with UdpAsyncServer(
+        address=address,
+        factory=factory,
+        args=args,
+        kwargs=kwargs,
+        interface=interface,
+        reuse_port=reuse_port,
+        allow_broadcast=allow_broadcast,
+    ) as server:
+        await server.serve_forever()
 
 async def listen_tcp_async(
-    address:    RawAddr, 
+    address:    RawAddr,
     factory:    Type[Session],
-    *args,
-    timeout:    Optional[int]        = None,
-    interface:  Optional[str]        = None,
-    reuse_port: bool                 = False,
-    backlog:    int                  = 100,
-    ssl:        Optional[SSLContext] = None,
-    **kwargs,
-):
+    args:       Optional[Tuple[Any, ...]] = None,
+    kwargs:     Optional[Dict[str, Any]]  = None,
+    interface:  Optional[str]             = None,
+    reuse_port: bool                      = False,
+    backlog:    int                       = 100,
+    ssl:        Optional[SSLContext]      = None,
+    timeout:    Optional[int]             = None,
+) -> None:
     """
-    :param address:         host/port of server
-    :param factory:         type factory for server request handler
-    :param args:            positional args to pass to the session factory
-    :param timeout:         max socket lifetime duration timeout if configured
-    :param interface:       interface to bind server socket to
-    :param reuse_port:      allow reuse of same port when enabled
-    :param backlog:         number of allowed and backloged async requests
-    :param ssl:             TLS context to encrypt socket communications
-    :param kwargs:          keyword arguments to pass to session factory
     """
-    # spawn protocol factory and test session generation
-    loop = asyncio.get_running_loop()
-    func = lambda: TcpProtocol(factory, args, kwargs, timeout)
-    func().test_factory()
-    # spawn server instance
-    host, port = address
-    server = await loop.create_server(func, host, port, 
-        reuse_port=reuse_port, backlog=backlog, ssl=ssl)
-    # modify interface settings for sockets (when enabled)
-    if interface:
-        for sock in server.sockets:
-            modify_socket(sock, None, interface)
-    # run server forever
-    async with server:
+    async with TcpAsyncServer(
+        address=address,
+        factory=factory,
+        args=args,
+        kwargs=kwargs,
+        interface=interface,
+        reuse_port=reuse_port,
+        backlog=backlog,
+        ssl=ssl,
+        timeout=timeout,
+    ) as server:
         await server.serve_forever()
 
 def listen_udp_threaded(
-    address:         RawAddr, 
+    address:         RawAddr,
     factory:         Type[Session],
-    *args,
-    interface:       Optional[str] = None,
-    reuse_port:      bool          = False,
-    allow_broadcast: bool          = False,
-    blocksize:  int                = 8192,
-    **kwargs,
-):
+    args:            Optional[Tuple[Any, ...]] = None,
+    kwargs:          Optional[Dict[str, Any]]  = None,
+    interface:       Optional[str]             = None,
+    reuse_port:      bool                      = False,
+    allow_broadcast: bool                      = False,
+    blocksize:       int                       = 8192
+) -> None:
     """
-    :param address:         host/port of server
-    :param factory:         type factory for server request handler
-    :param args:            positional args to pass to the session factory
-    :param timeout:         max socket lifetime duration timeout if configured
-    :param interface:       interface to bind server socket to
-    :param reuse_port:      allow reuse of same port when enabled
-    :param allow_broadcast: allow for udp broadcast messages when enabled
-    :param kwargs:          keyword arguments to pass to session factory
     """
-    factory(*args, **kwargs)
-    server = UdpThreadServer(
-        address=address, 
-        factory=factory, 
-        args=args, 
-        kwargs=kwargs, 
+    with UdpThreadServer(
+        address=address,
+        factory=factory,
+        args=args,
+        kwargs=kwargs,
         interface=interface,
         blocksize=blocksize,
-        reuse_port=reuse_port, 
+        reuse_port=reuse_port,
         allow_broadcast=allow_broadcast,
-    )
-    with server:
+    ) as server:
         server.serve_forever()
 
 def listen_tcp_threaded(
     address:    RawAddr,
     factory:    Type[Session],
-    *args,
-    timeout:    Optional[int]        = None,
-    interface:  Optional[str]        = None,
-    reuse_port: bool                 = False,
-    ssl:        Optional[SSLContext] = None,
-    blocksize:  int                  = 8192,
-    **kwargs,
-):
+    args:       Optional[Tuple[Any, ...]] = None,
+    kwargs:     Optional[Dict[str, Any]]  = None,
+    interface:  Optional[str]             = None,
+    reuse_port: bool                      = False,
+    blocksize:  int                       = 8192,
+    ssl:        Optional[SSLContext]      = None,
+    timeout:    Optional[int]             = None,
+) -> None:
     """
-    :param address:         host/port of server
-    :param factory:         type factory for server request handler
-    :param args:            positional args to pass to the session factory
-    :param timeout:         max socket lifetime duration timeout if configured
-    :param interface:       interface to bind server socket to
-    :param reuse_port:      allow reuse of same port when enabled
-    :param backlog:         number of allowed and backloged async requests
-    :param ssl:             TLS context to encrypt socket communications
-    :param kwargs:          keyword arguments to pass to session factory
     """
-    factory(*args, **kwargs)
-    server = TcpThreadServer(
-        address=address, 
-        factory=factory, 
-        args=args, 
-        kwargs=kwargs, 
-        timeout=timeout, 
-        interface=interface, 
-        reuse_port=reuse_port, 
-        ssl=ssl,
+    with TcpThreadServer(
+        address=address,
+        factory=factory,
+        args=args,
+        kwargs=kwargs,
+        interface=interface,
+        reuse_port=reuse_port,
         blocksize=blocksize,
-    )
-    with server:
+        ssl=ssl,
+        timeout=timeout,
+    ) as server:
         server.serve_forever()

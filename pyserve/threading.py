@@ -1,52 +1,67 @@
 """
-Threading Implementations of session-based servers
+PyServe Threading implementations of session-based servers
 """
 import socket
 import socketserver
 from ssl import SSLContext, SSLSocket
-from typing import Type, Optional, Dict, Any, ClassVar, Protocol
+from typing import (
+    Any, Callable, ClassVar, Dict, Generic, Optional, Type, TypeVar, cast)
+from typing_extensions import override
 
-from pyderive import dataclass, field
-
-from .abc import *
+from .abc import (
+    Address, AnyAddr, RawAddr, Session, UdpWriter, Writer, modify_socket)
 
 #** Variables **#
 __all__ = ['UdpThreadServer', 'TcpThreadServer']
 
+W = TypeVar('W', bound=Writer)
+H = TypeVar('H', bound='RequestHandler')
+
 #** Functions **#
 
 def new_handler(
-    base:      Type['BaseRequestHandler'],
+    base:      Type[H],
     factory:   Type[Session],
-    args:      tuple           = (),
-    kwargs:    Dict[str, Any]  = {},
-    blocksize: int             = 8192
-) -> Type['BaseRequestHandler']:
+    args:      Optional[tuple]          = None,
+    kwargs:    Optional[Dict[str, Any]] = None,
+    blocksize: int                      = 8192
+) -> Type[H]:
     """
     spawn new request-handler class w/ configured settings
     """
     # test factory generation
+    args   = args or ()
+    kwargs = kwargs or {}
     factory(*args, **kwargs)
     # generate new request handler
-    name = f'{base.__name__}Instance'
-    return type(name, (base, ), dict(
+    name   = f'{base.__name__}Instance'
+    newcls = type(name, (base, ), dict(
         factory=factory,
         args=args,
         kwargs=kwargs,
         blocksize=blocksize,
     ))
+    return cast(Type[H], newcls)
 
 #** Classes **#
 
-class BaseWriter(Writer, Protocol):
+class ThreadWriter(Writer):
+    """
+    Baseclass for threading socket writers
+    """
+    __slots__ = ('addr', 'sock', 'closing')
+
+    addr:    Address
     sock:    socket.socket
     closing: bool
-    
+
+    def __init__(self, addr: Address, sock: socket.socket, closing: bool = False):
+        self.addr    = addr
+        self.sock    = sock
+        self.closing = closing
+
     def using_tls(self) -> bool:
         return isinstance(self.sock, SSLSocket)
-
-    def start_tls(self, context: SSLContext):
-        self.sock = context.wrap_socket(self.sock, server_side=True)
 
     def close(self):
         self.closing = True
@@ -55,147 +70,205 @@ class BaseWriter(Writer, Protocol):
     def is_closing(self) -> bool:
         return self.closing
 
-@dataclass(slots=True)
-class UdpWriter(UdpWriter, BaseWriter):
-    addr: Address
-    sock: socket.socket
-    closing: bool = False
-    
+class UdpThreadWriter(UdpWriter, ThreadWriter):
+    """
+    Udp implementation for threaded socket writer
+    """
+
+    def write(self, data: bytes, addr: Optional[AnyAddr] = None) -> int:
+        return self.sock.sendto(data, addr or self.addr)
+
+class TcpThreadWriter(ThreadWriter):
+    """
+    Tcp implementation for threaded socket writer
+    """
+
     def start_tls(self, context: SSLContext):
-        raise NotImplementedError('Cannot Use SSL over UDP')
+        self.sock = context.wrap_socket(self.sock, server_side=True)
 
-    def write(self, data: bytes, addr: Optional[AnyAddr] = None):
-        self.sock.sendto(data, addr or self.addr)
-
-@dataclass(slots=True)
-class TcpWriter(BaseWriter):
-    sock: socket.socket
-    closing: bool = False
-
-    def write(self, data: bytes):
+    def write(self, data: bytes) -> int:
         self.sock.sendall(data)
+        return len(data)
 
-class BaseRequestHandler(socketserver.BaseRequestHandler):
-    factory:   Type[Session]
-    args:      tuple           
+class RequestHandler(Generic[W], socketserver.BaseRequestHandler):
+    """
+    Baseclass request handler implementation for UDP/TCP
+    """
+    factory:   ClassVar[Type[Session]]
+    args:      ClassVar[tuple]
     kwargs:    Dict[str, Any]
-    blocksize: int
+    blocksize: ClassVar[int]
 
-    def setup(self):
-        """configure and generate session w/ information collected"""
-        self.addr:   Address = Address(*self.client_address)
-        self.writer: Writer
-        self.error:  Optional[Exception] = None
-        # spawn session object
+    addr:   Address
+    writer: W
+    error:  Optional[Exception]
+
+    @override
+    def setup(self) -> None:
+        self.error   = None
         self.session = self.factory(*self.args, **self.kwargs)
         self.session.connection_made(self.addr, self.writer)
- 
-    def finish(self):
-        """notify that connection disconnected"""
+
+    @override
+    def finish(self) -> None:
         self.session.connection_lost(self.error)
 
-class UdpHandler(BaseRequestHandler):
- 
-    def setup(self):
-        """handle connection spawn"""
-        self.addr    = Address(*self.client_address) 
-        self.sock    = self.request[1]
-        self.writer: UdpWriter = UdpWriter(self.addr, self.sock)
-        super().setup()
- 
-    def handle(self):
-        """handle single inbound udp packet"""
+class UdpHandler(RequestHandler[UdpThreadWriter]):
+    """
+    Udp server request handler implementation
+    """
+    sock: socket.socket
+
+    @override
+    def setup(self) -> None:
+        self.addr   = Address(*self.client_address)
+        self.sock   = self.request[1]
+        self.writer = UdpThreadWriter(self.addr, self.sock)
+        return super().setup()
+
+    @override
+    def handle(self) -> None:
         try:
             data = self.request[0]
             self.session.data_recieved(data)
-        except socket.error as e:
-            self.error = e
+        except socket.error as err:
+            self.error = err
             if not self.writer.closing:
                 self.writer.close()
 
-class TcpHandler(BaseRequestHandler):
-    
-    def setup(self):
-        """handle setup of server"""
-        self.sock = self.request
-        self.writer: TcpWriter = TcpWriter(self.sock)
-        super().setup()
+class TcpHandler(RequestHandler[TcpThreadWriter]):
+    """
+    Tcp server request handler implementation
+    """
+    sock: socket.socket
 
-    def handle(self):
-        """handle subsequent reads of inbound data"""
+    @override
+    def setup(self) -> None:
+        self.addr   = Address(*self.client_address)
+        self.sock   = self.request
+        self.writer = TcpThreadWriter(self.addr, self.sock)
+        return super().setup()
+
+    @override
+    def handle(self) -> None:
         while not self.writer.closing:
             try:
                 data = self.writer.sock.recv(self.blocksize)
                 if not data:
                     break
                 self.session.data_recieved(data)
-            except socket.error as e:
-                self.error = e
+            except socket.error as err:
+                self.error = err
                 if not self.writer.closing:
                     self.writer.close()
                 break
 
-@dataclass
-class BaseThreadServer(socketserver.ThreadingMixIn):
-    handler: ClassVar[Type[BaseRequestHandler]]
+class ThreadedMixin(Generic[H], socketserver.ThreadingMixIn):
+    """
+    Threaded server mixin tweaks
+    """
+    socket:         socket.socket
+    address_family: int
+    socket_type:    int
+    handler:        Type[H]
+   
+    _cleanup:        Callable[[], None]
+    shutdown:        Callable[[], None]
+    server_bind:     Callable[[], None]
+    server_activate: Callable[[], None]
 
-    address:    RawAddr
-    factory:    Type[Session]
-    args:       tuple          = field(default_factory=tuple)
-    kwargs:     Dict[str, Any] = field(default_factory=dict)
-    interface:  Optional[str]  = None
-    reuse_port: bool           = False
-    blocksize: int             = 8192
- 
-    def __post_init__(self):
-        self.daemon_threads   = True
-        self.max_packet_size  = self.blocksize
-        self.allow_reuse_port = self.reuse_port
+    daemon_threads = True
 
-    def new_handler(self) -> Type[BaseRequestHandler]:
-        return new_handler(
-            base=self.handler, 
-            factory=self.factory, 
-            args=self.args, 
-            kwargs=self.kwargs,
-            blocksize=self.blocksize,
-        )
+    def _set_classvars(self, blocksize: int, reuse_port: bool):
+        setattr(self, 'max_packet_size', blocksize)
+        setattr(self, 'allow_reuse_port', reuse_port)
 
-    def rebuild_socket(self, s: socketserver.BaseServer):
-        """rebuild socket to recover from socket failure"""
-        s.socket.close()
-        s.socket = socket.socket(s.address_family, s.socket_type)
-        s.server_bind()
+    def start(self):
+        """
+        shorthand for binding and activating the server (if not already)
+        """
+        try:
+            self.server_bind()
+            self.server_activate()
+        except Exception as err:
+            self.server_close()
+            raise err
 
-@dataclass
-class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
-    handler = UdpHandler
+    def stop(self):
+        """
+        shutdown serve_forever loop and close socket
+        """
+        self.shutdown()
+        self._cleanup()
 
-    allow_broadcast: bool = False
- 
-    def __post_init__(self):
-        super().__post_init__()
-        socketserver.UDPServer.__init__(self, self.address, self.new_handler())
+    def rebuild_socket(self):
+        """
+        rebuild socket to recover from socket failure
+        """
+        self.socket.close()
+        self.socket = socket.socket(self.address_family, self.socket_type)
+        self.server_bind()
 
-    def __exit__(self, *_):
+class UdpThreadServer(ThreadedMixin[UdpHandler], socketserver.UDPServer):
+    """
+    Udp threaded session-based server implementation
+    """
+    address:         RawAddr
+    interface:       Optional[str]
+    allow_broadcast: bool
+
+    def __init__(self,
+        address:           RawAddr,
+        factory:           Type[Session],
+        args:              Optional[tuple]          = None,
+        kwargs:            Optional[Dict[str, Any]] = None,
+        interface:         Optional[str]            = None,
+        reuse_port:        bool                     = False,
+        blocksize:         int                      = 8192,
+        allow_broadcast:   bool                     = False,
+        bind_and_activate: bool                     = True,
+    ):
+        self.address         = address
+        self.handler         = new_handler(UdpHandler, factory, args, kwargs, blocksize)
+        self.interface       = interface
+        self.allow_broadcast = allow_broadcast
+        self._set_classvars(blocksize, reuse_port)
+        super().__init__(address, self.handler, bind_and_activate)
+
+    def __exit__(self, *args):
+        super().__exit__(*args)
         self.shutdown()
 
-    def server_bind(self):
-        """additional socket modification controls on server-bind"""
+    def _cleanup(self):
+        """
+        custom server cleanup function
+        """
+        self.socket.close()
+        self.server_close()
+
+    @override
+    def server_bind(self) -> None:
+        """
+        additional socket modification controls on server-bind
+        """
         super().server_bind()
         modify_socket(self.socket, None, self.interface)
         if self.allow_broadcast:
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
+    @override
     def get_request(self):
-        """respawn socket after socket error to prevent infinite hanging loop"""
+        """
+        respawn socket after socket error to prevent infinite hanging loop
+        """
         try:
             return super().get_request()
         except socket.error as e:
-            self.rebuild_socket(self)
+            self.rebuild_socket()
             raise e
- 
-    def serve_forever(self, poll_interval: float = 0.5):
+
+    @override
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
         """
         polls server forever until its closed by something else
 
@@ -204,47 +277,78 @@ class UdpThreadServer(BaseThreadServer, socketserver.UDPServer):
         try:
             return super().serve_forever(poll_interval)
         finally:
-            self.cleanup()
+            self._cleanup()
 
-    def cleanup(self):
-        """override shutdown behavior"""
+class TcpThreadServer(ThreadedMixin[TcpHandler], socketserver.TCPServer):
+    """
+    Tcp threaded session-based server implementation
+    """
+    address:   RawAddr
+    interface: Optional[str]
+    ssl:       Optional[SSLContext]
+    timeout:   Optional[float]
+
+    def __init__(self,
+        address:           RawAddr,
+        factory:           Type[Session],
+        args:              Optional[tuple]          = None,
+        kwargs:            Optional[Dict[str, Any]] = None,
+        interface:         Optional[str]            = None,
+        reuse_port:        bool                     = False,
+        blocksize:         int                      = 8192,
+        ssl:               Optional[SSLContext]     = None,
+        timeout:           Optional[float]          = None,
+        bind_and_activate: bool                     = True,
+    ):
+        self.address   = address
+        self.handler   = new_handler(TcpHandler, factory, args, kwargs, blocksize)
+        self.interface = interface
+        self.ssl       = ssl
+        self.timeout   = timeout
+        self._set_classvars(blocksize, reuse_port)
+        super().__init__(address, self.handler, bind_and_activate)
+
+    def __exit__(self, *args):
+        super().__exit__(*args)
+        self.shutdown()
+
+    def _cleanup(self):
+        """
+        custom server cleanup function
+        """
+        self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
         self.server_close()
 
-@dataclass
-class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
-    handler = TcpHandler
-
-    ssl:     Optional[SSLContext] = None
-    timeout: Optional[int]        = None
- 
-    def __post_init__(self):
-        super().__post_init__()
-        socketserver.TCPServer.__init__(self, self.address, self.new_handler())
-
-    def __exit__(self, *_):
-        self.shutdown()
- 
+    @override
     def server_bind(self):
-        """additional socket modification controls on server-bind"""
+        """
+        additional socket modification controls on server-bind
+        """
         super().server_bind()
         modify_socket(self.socket, None, self.interface)
-        if self.ssl:
-            self.socket = self.ssl.wrap_socket(self.socket, server_side=True)
+        if self.ssl is not None:
+            sock = self.ssl.wrap_socket(self.socket, server_side=True)
+            self.socket = cast(socket.socket, sock)
 
+    @override
     def get_request(self):
-        """respawn socket after socket error to prevent infinite hanging loop"""
+        """
+        respawn socket after socket error to prevent infinite hanging loop
+        """
+        timeout = int(self.timeout) if self.timeout else None
         try:
             sock, addr = super().get_request()
-            modify_socket(sock, self.timeout, None)
+            modify_socket(sock, timeout, None)
             return (sock, addr)
         except socket.timeout as e:
             raise e
         except socket.error as e:
-            self.rebuild_socket(self)
+            self.rebuild_socket()
             raise e
- 
-    def serve_forever(self, poll_interval: float = 0.5):
+
+    @override
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
         """
         polls server forever until its closed by something else
 
@@ -253,10 +357,4 @@ class TcpThreadServer(BaseThreadServer, socketserver.TCPServer):
         try:
             return super().serve_forever(poll_interval)
         finally:
-            self.cleanup()
-
-    def cleanup(self):
-        """override shutdown behavior"""
-        self.socket.shutdown(socket.SHUT_RDWR)
-        self.socket.close()
-        self.server_close()
+            self._cleanup()
