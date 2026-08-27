@@ -92,7 +92,7 @@ class Session(Protocol):
        raise NotImplementedError
 
     @abstractmethod
-    def data_recieved(self, data: bytes):
+    def data_received(self, data: bytes):
         raise NotImplementedError
 
     @abstractmethod

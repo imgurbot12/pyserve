@@ -26,7 +26,7 @@ class EchoSession(Session):
     def connection_made(self, addr: Address, writer: Writer):
         self.addr   = addr
         self.writer = writer
-    def data_recieved(self, data: bytes):
+    def data_received(self, data: bytes):
         self.writer.write(data)
         if data == b'bye':
             self.writer.close()
@@ -40,7 +40,7 @@ class ArgsSession(Session):
     def connection_made(self, addr: Address, writer: Writer):
         self.addr   = addr
         self.writer = writer
-    def data_recieved(self, data: bytes):
+    def data_received(self, data: bytes):
         message = json.dumps({
             'args':   self.args,
             'kwargs': self.kwargs,

@@ -5,7 +5,7 @@ import asyncio
 import socket
 from ssl import SSLContext
 from typing import (
-    Any, Callable, ClassVar, Dict, Generic, Optional, Tuple, Type, 
+    Any, Callable, ClassVar, Dict, Generic, Optional, Tuple, Type,
     TypeVar, Union, cast)
 from typing_extensions import Self
 
@@ -14,10 +14,10 @@ from .abc import (
 
 #** Variables **#
 __all__ = [
-    'UdpAsyncProtocol', 
-    'TcpAsyncProtocol', 
+    'UdpAsyncProtocol',
+    'TcpAsyncProtocol',
 
-    'UdpAsyncServer', 
+    'UdpAsyncServer',
     'TcpAsyncServer'
 ]
 
@@ -131,7 +131,7 @@ class UdpAsyncProtocol(BaseProtocol, asyncio.DatagramProtocol):
         writer       = UdpAsyncWriter(address, self.transport)
         self.session = self._new_session()
         self.session.connection_made(address, writer)
-        self.session.data_recieved(data)
+        self.session.data_received(data)
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         self.session.connection_lost(exc)
@@ -165,7 +165,7 @@ class TcpAsyncProtocol(BaseProtocol, asyncio.Protocol):
         self.session.connection_made(address, writer)
 
     def data_received(self, data: bytes) -> None:
-        self.session.data_recieved(data)
+        self.session.data_received(data)
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         self.session.connection_lost(exc)
@@ -174,7 +174,7 @@ class UdpAsyncServer:
     """
     Udp async session-based server implementation
     """
-    __slots__ = ('address', 'interface', 'handler', 
+    __slots__ = ('address', 'interface', 'handler',
         'allow_broadcast', 'allow_reuse_port', '_event', '_server')
 
     address_family: ClassVar[int] = socket.AF_INET

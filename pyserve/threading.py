@@ -130,7 +130,7 @@ class UdpHandler(RequestHandler[UdpThreadWriter]):
     def handle(self) -> None:
         try:
             data = self.request[0]
-            self.session.data_recieved(data)
+            self.session.data_received(data)
         except socket.error as err:
             self.error = err
             if not self.writer.closing:
@@ -156,7 +156,7 @@ class TcpHandler(RequestHandler[TcpThreadWriter]):
                 data = self.writer.sock.recv(self.blocksize)
                 if not data:
                     break
-                self.session.data_recieved(data)
+                self.session.data_received(data)
             except socket.error as err:
                 self.error = err
                 if not self.writer.closing:
@@ -171,7 +171,7 @@ class ThreadedMixin(Generic[H], socketserver.ThreadingMixIn):
     address_family: int
     socket_type:    int
     handler:        Type[H]
-   
+
     _cleanup:        Callable[[], None]
     shutdown:        Callable[[], None]
     server_bind:     Callable[[], None]
