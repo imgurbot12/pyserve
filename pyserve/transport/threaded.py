@@ -107,24 +107,6 @@ class BaseProtocol(Generic[T]):
         self.transport.close()
         self.outbound.put_nowait(None)
 
-    @staticmethod
-    def writer_thread(f: SessFactory, inb: queue.Queue, out: queue.Queue):
-        """
-        """
-        session: Session = f.build()
-        while True:
-            action: ServerAction = inb.get()
-            if isinstance(action, Connected):
-                session.connection_made(action.addr, action.writer)
-            elif isinstance(action, Recieved):
-                session.data_received(action.data)
-            elif isinstance(action, Disconnected):
-                session.connection_lost(action.error)
-                out.put_nowait(None)
-                break
-            else:
-                break
-
     async def reader_task(self):
         """
         """
@@ -147,36 +129,36 @@ class BaseProtocol(Generic[T]):
                 self.transport.close()
                 break
 
-    def spawn_tasks(self):
-        """
-        """
-        if self.task is not None:
-            return
-        args = (self.factory, self.inbound, self.outbound)
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(self.pool, self.writer_thread, *args)
-        self.task = loop.create_task(self.reader_task())
-
-    def send_connected(self, addr: RawAddr):
-        """
-        """
-        address = Address(*addr)
-        writer  = QueuedWriter(address, self.outbound, self.using_tls)
-        self.inbound.put_nowait(Connected(address, writer))
-
 class UdpThreadedProtocol(BaseProtocol, asyncio.DatagramProtocol):
     transport: asyncio.DatagramTransport
 
+    @staticmethod
+    def writer_thread(f: SessFactory, writer: QueuedWriter, data: bytes):
+        """
+        """
+        session: Session = f.build()
+        session.connection_made(writer.addr, writer)
+        session.data_received(data)
+        session.connection_lost(None)
+
+    def spawn_tasks(self, addr: RawAddr, data: bytes):
+        """
+        """
+        loop = asyncio.get_event_loop()
+        if self.task is None:
+            self.task = loop.create_task(self.reader_task())
+        address = Address(*addr)
+        writer  = QueuedWriter(address, self.outbound, self.using_tls)
+        args    = (self.factory, writer, data)
+        loop.run_in_executor(self.pool, self.writer_thread, *args)
+
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         self.transport = transport
-        self.spawn_tasks()
 
     def datagram_received(self, data: bytes, addr: RawAddr) -> None:
-        self.send_connected(addr)
-        self.inbound.put_nowait(Recieved(data))
+        self.spawn_tasks(addr, data)
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
-        self.inbound.put_nowait(Disconnected(exc))
         self.close()
 
 class TcpThreadedProtocol(BaseProtocol, asyncio.Protocol):
@@ -206,11 +188,41 @@ class TcpThreadedProtocol(BaseProtocol, asyncio.Protocol):
         loop = asyncio.get_event_loop()
         loop.create_task(expire())
 
+    @staticmethod
+    def writer_thread(f: SessFactory, inb: queue.Queue, out: queue.Queue):
+        """
+        """
+        session: Session = f.build()
+        while True:
+            action: ServerAction = inb.get()
+            if isinstance(action, Connected):
+                session.connection_made(action.addr, action.writer)
+            elif isinstance(action, Recieved):
+                session.data_received(action.data)
+            elif isinstance(action, Disconnected):
+                session.connection_lost(action.error)
+                out.put_nowait(None)
+                break
+            else:
+                break
+
+    def spawn_tasks(self, addr: RawAddr):
+        """
+        """
+        if self.task is not None:
+            return
+        address = Address(*addr)
+        writer  = QueuedWriter(address, self.outbound, self.using_tls)
+        args    = (self.factory, self.inbound, self.outbound)
+        loop    = asyncio.get_event_loop()
+        loop.run_in_executor(self.pool, self.writer_thread, *args)
+        self.task = loop.create_task(self.reader_task())
+        self.inbound.put_nowait(Connected(address, writer))
+
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = cast(asyncio.Transport, transport)
         addr = self.transport.get_extra_info('peername')
-        self.spawn_tasks()
-        self.send_connected(addr)
+        self.spawn_tasks(addr)
         if self.timeout is not None:
             self.set_timeout(self.timeout)
 
