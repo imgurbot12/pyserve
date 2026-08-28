@@ -4,7 +4,7 @@ PyServe Async Transport Server UnitTests
 import asyncio
 import json
 import socket
-from typing import Any, Dict, Generic, Optional, Type, TypeVar, Union, cast
+from typing import Any, ClassVar, Dict, Generic, Optional, Type, TypeVar, Union, cast
 from unittest import IsolatedAsyncioTestCase
 
 from . import ArgsSession, EchoSession, random_port
@@ -12,7 +12,12 @@ from ..abc import RawAddr, Session
 from ..transport import TcpAsyncServer, UdpAsyncServer
 
 #** Variables **#
-__all__ = ['UdpAsyncTests', 'TcpAsyncTests']
+__all__ = [
+    'UdpAsyncTests',
+    'TcpAsyncTests',
+    'UdpAsyncThreadedTests',
+    'TcpAsyncThreadedTests'
+]
 
 Server = Union[UdpAsyncServer, TcpAsyncServer]
 S      = TypeVar('S', bound=Server)
@@ -25,6 +30,7 @@ class AsyncTests(IsolatedAsyncioTestCase, Generic[S]):
     """
     __test__ = False
 
+    kwargs:     ClassVar[Dict[str, Any]] = {}
     server_cls: Type[S]
 
     addr:   RawAddr
@@ -36,9 +42,8 @@ class AsyncTests(IsolatedAsyncioTestCase, Generic[S]):
         factory: Type[Session],
         args:    tuple          = (),
         kwargs:  Dict[str, Any] = {},
-        **kw,
     ) -> S:
-        server = self.server_cls(addr, factory, args, kwargs, **kw)
+        server = self.server_cls(addr, factory, args, kwargs, **self.kwargs)
         await server.start()
         self.addr   = addr
         self.server = server
@@ -132,3 +137,9 @@ class TcpAsyncTests(AsyncTests[TcpAsyncServer]):
             await self.assertRespond(b'test', b'')
         except ConnectionResetError:
             pass
+
+class UdpAsyncThreadedTests(UdpAsyncTests):
+    kwargs = {'threads': 0}
+
+class TcpAsyncThreadedTests(TcpAsyncTests):
+    kwargs = {'threads': 0}

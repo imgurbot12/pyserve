@@ -4,21 +4,26 @@ PyServe Common Abstractions
 from abc import abstractmethod
 import socket
 from ssl import SSLContext
-from typing import NamedTuple, Optional, Protocol, Tuple, Union
+from typing import (
+    Any, Dict, Generic, NamedTuple, Optional, Protocol, Tuple,
+    Type, TypeVar, Union)
 
 #** Variables **#
 __all__ = [
+    'S',
     'RawAddr',
     'AnyAddr',
 
     'modify_socket',
 
     'Address',
+    'SessFactory',
     'Writer',
     'UdpWriter',
     'Session',
 ]
 
+S       = TypeVar('S', bound='Session')
 RawAddr = Tuple[str, int]
 AnyAddr = Union[RawAddr, 'Address']
 
@@ -44,6 +49,17 @@ def modify_socket(
 class Address(NamedTuple):
     host: str
     port: int
+
+class SessFactory(Generic[S], NamedTuple):
+    factory: Type[S]
+    args:    Tuple[Any, ...]
+    kwargs:  Dict[str, Any]
+
+    def build(self) -> S:
+        return self.factory(*self.args, **self.kwargs)
+
+    def test(self) -> None:
+        self.build()
 
 class Writer(Protocol):
     """

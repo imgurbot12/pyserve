@@ -9,10 +9,12 @@ from .. import Address, Session, Writer
 
 #** Variables **#
 __all__ = [
-    'UdpThreadTests', 
+    'UdpThreadTests',
     'TcpThreadTests',
-    'UdpAsyncTests', 
+    'UdpAsyncTests',
     'TcpAsyncTests',
+    'UdpAsyncThreadedTests',
+    'TcpAsyncThreadedTests'
 ]
 
 #** Functions **#
@@ -51,7 +53,7 @@ class ArgsSession(Session):
         pass
 
 #** Imports **#
-from .threading import UdpThreadTests, TcpThreadTests
-from .transport import UdpAsyncTests, TcpAsyncTests
+from .threading import *
+from .transport import *
 
 

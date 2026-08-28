@@ -37,6 +37,7 @@ async def listen_udp_async(
     interface:       Optional[str]             = None,
     reuse_port:      bool                      = False,
     allow_broadcast: bool                      = False,
+    threads:         Optional[int]             = None,
 ) -> None:
     """
     """
@@ -48,6 +49,7 @@ async def listen_udp_async(
         interface=interface,
         reuse_port=reuse_port,
         allow_broadcast=allow_broadcast,
+        threads=threads,
     ) as server:
         await server.serve_forever()
 
@@ -61,6 +63,7 @@ async def listen_tcp_async(
     backlog:    int                       = 100,
     ssl:        Optional[SSLContext]      = None,
     timeout:    Optional[int]             = None,
+    threads:    Optional[int]             = None,
 ) -> None:
     """
     """
@@ -74,6 +77,7 @@ async def listen_tcp_async(
         backlog=backlog,
         ssl=ssl,
         timeout=timeout,
+        threads=threads,
     ) as server:
         await server.serve_forever()
 
