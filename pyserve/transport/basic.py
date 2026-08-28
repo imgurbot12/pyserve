@@ -69,7 +69,6 @@ class BaseProtocol(Generic[T]):
 
     def __init__(self, factory: SessFactory):
         self.factory = factory
-        self.factory.test()
 
     def set_timeout(self, timeout: float, tport: T):
         """

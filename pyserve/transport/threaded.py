@@ -92,6 +92,8 @@ class BaseProtocol(Generic[T]):
         self.task      = None
 
     def wrap_tls(self, context: SSLContext):
+        """
+        """
         if not isinstance(self.transport, asyncio.Transport):
             raise RuntimeError()
         def callback(transport: asyncio.Transport):
@@ -100,25 +102,32 @@ class BaseProtocol(Generic[T]):
         wrap_ssl(context, self.transport, callback)
 
     def close(self):
+        """
+        """
         self.transport.close()
         self.outbound.put_nowait(None)
 
     @staticmethod
-    def writer_thread(f: SessFactory, q: queue.Queue):
+    def writer_thread(f: SessFactory, inb: queue.Queue, out: queue.Queue):
+        """
+        """
         session: Session = f.build()
         while True:
-            action: ServerAction = q.get()
+            action: ServerAction = inb.get()
             if isinstance(action, Connected):
                 session.connection_made(action.addr, action.writer)
             elif isinstance(action, Recieved):
                 session.data_received(action.data)
             elif isinstance(action, Disconnected):
                 session.connection_lost(action.error)
+                out.put_nowait(None)
                 break
             else:
                 break
 
     async def reader_task(self):
+        """
+        """
         while not self.transport.is_closing():
             try:
                 message: ClientAction = self.outbound.get_nowait()
@@ -135,20 +144,24 @@ class BaseProtocol(Generic[T]):
                     transport = cast(asyncio.Transport, self.transport)
                     transport.write(message.data)
             else:
-                self.close()
+                self.transport.close()
                 break
 
-    def spawn_tasks(self, addr: RawAddr):
+    def spawn_tasks(self):
         """
         """
         if self.task is not None:
             return
+        args = (self.factory, self.inbound, self.outbound)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(self.pool, self.writer_thread, *args)
+        self.task = loop.create_task(self.reader_task())
+
+    def send_connected(self, addr: RawAddr):
+        """
+        """
         address = Address(*addr)
         writer  = QueuedWriter(address, self.outbound, self.using_tls)
-        args    = (self.factory, self.inbound, )
-        loop    = asyncio.get_event_loop()
-        loop.run_in_executor(self.pool, self.writer_thread, *args)
-        self.task = asyncio.create_task(self.reader_task())
         self.inbound.put_nowait(Connected(address, writer))
 
 class UdpThreadedProtocol(BaseProtocol, asyncio.DatagramProtocol):
@@ -156,9 +169,10 @@ class UdpThreadedProtocol(BaseProtocol, asyncio.DatagramProtocol):
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         self.transport = transport
+        self.spawn_tasks()
 
     def datagram_received(self, data: bytes, addr: RawAddr) -> None:
-        self.spawn_tasks(addr)
+        self.send_connected(addr)
         self.inbound.put_nowait(Recieved(data))
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
@@ -195,7 +209,8 @@ class TcpThreadedProtocol(BaseProtocol, asyncio.Protocol):
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = cast(asyncio.Transport, transport)
         addr = self.transport.get_extra_info('peername')
-        self.spawn_tasks(addr)
+        self.spawn_tasks()
+        self.send_connected(addr)
         if self.timeout is not None:
             self.set_timeout(self.timeout)
 

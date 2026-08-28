@@ -178,7 +178,7 @@ class TcpAsyncServer:
         self.ssl              = ssl
         self.allow_reuse_port = reuse_port
         self._server          = None
-        self.handler() # test that initialization works as intended
+        sessfact.test()
 
     async def __aenter__(self) -> Self:
         server = await self._start()
