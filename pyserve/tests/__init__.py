@@ -1,31 +1,17 @@
 """
-PyServe Server UnitTests
+PyServe UnitTests
 """
-import json
-import random
-from typing import Optional
+from typing import Optional, Union
 
-from .. import Address, Session, Writer
+from ..abc import Address, AsyncSession, Session, UdpWriter, Writer
 
 #** Variables **#
-__all__ = [
-    'UdpThreadTests',
-    'TcpThreadTests',
-    'UdpAsyncTests',
-    'TcpAsyncTests',
-    'UdpAsyncThreadedTests',
-    'TcpAsyncThreadedTests'
-]
-
-#** Functions **#
-
-def random_port() -> int:
-    return random.randint(10_000, 20_000)
+__all__ = ['TransportTests', 'ThreadingTests']
 
 #** Classes **#
 
 class EchoSession(Session):
-    def connection_made(self, addr: Address, writer: Writer):
+    def connection_made(self, addr: Address, writer: Union[Writer, UdpWriter]):
         self.addr   = addr
         self.writer = writer
     def data_received(self, data: bytes):
@@ -35,25 +21,17 @@ class EchoSession(Session):
     def connection_lost(self, err: Optional[Exception]):
         pass
 
-class ArgsSession(Session):
-    def __init__(self, *args, **kwargs):
-        self.args   = args
-        self.kwargs = kwargs
-    def connection_made(self, addr: Address, writer: Writer):
+class AsyncEchoSession(AsyncSession):
+    async def connection_made(self, addr: Address, writer: Writer):
         self.addr   = addr
         self.writer = writer
-    def data_received(self, data: bytes):
-        message = json.dumps({
-            'args':   self.args,
-            'kwargs': self.kwargs,
-            'data':   data.decode(),
-        }).encode()
-        self.writer.write(message)
-    def connection_lost(self, err: Optional[Exception]):
+    async def data_received(self, data: bytes):
+        self.writer.write(data)
+        if data == b'bye':
+            self.writer.close()
+    async def connection_lost(self, err: Optional[Exception]):
         pass
 
 #** Imports **#
-from .threading import *
-from .transport import *
-
-
+from .transport import TransportTests
+from .threading import ThreadingTests

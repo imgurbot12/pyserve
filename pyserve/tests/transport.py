@@ -1,65 +1,31 @@
 """
-PyServe Async Transport Server UnitTests
+PyServe Async Transport UnitTests
 """
-import asyncio
-import json
-import socket
-from typing import Any, ClassVar, Dict, Generic, Optional, Type, TypeVar, Union, cast
+from typing import Optional, Type, Union
 from unittest import IsolatedAsyncioTestCase
 
-from . import ArgsSession, EchoSession, random_port
-from ..abc import RawAddr, Session
+from . import EchoSession, AsyncEchoSession
+from ..abc import SessFactory
+from ..client import TcpAsyncClient, UdpAsyncClient
 from ..transport import TcpAsyncServer, UdpAsyncServer
 
 #** Variables **#
-__all__ = [
-    'UdpAsyncTests',
-    'TcpAsyncTests',
-    'UdpAsyncThreadedTests',
-    'TcpAsyncThreadedTests'
-]
+__all__ = ['TransportTests']
 
+Client = Union[TcpAsyncClient, UdpAsyncClient]
 Server = Union[UdpAsyncServer, TcpAsyncServer]
-S      = TypeVar('S', bound=Server)
 
 #** Classes **#
 
-class AsyncTests(IsolatedAsyncioTestCase, Generic[S]):
+class TransportTests(IsolatedAsyncioTestCase):
     """
-    Baseclass UnitTest implementation for async servers
     """
-    __test__ = False
-
-    kwargs:     ClassVar[Dict[str, Any]] = {}
-    server_cls: Type[S]
-
-    addr:   RawAddr
     server: Server
-    client: socket.socket
-
-    async def spawn_async(self,
-        addr:    RawAddr,
-        factory: Type[Session],
-        args:    tuple          = (),
-        kwargs:  Dict[str, Any] = {},
-    ) -> S:
-        server = self.server_cls(addr, factory, args, kwargs, **self.kwargs)
-        await server.start()
-        self.addr   = addr
-        self.server = server
-        self.client = socket.socket(server.address_family, server.socket_type)
-        self.client.setblocking(False)
-        if isinstance(server, TcpAsyncServer):
-            loop = asyncio.get_running_loop()
-            await loop.sock_connect(self.client, addr)
-        return cast(S, server)
-
-    async def asyncSetUp(self) -> None:
-        asyncio.get_running_loop().set_debug(False)
+    client: Client
 
     async def asyncTearDown(self) -> None:
-        client: Optional[socket.socket] = getattr(self, 'client', None)
-        server: Optional[S] = getattr(self, 'server', None)
+        client: Optional[Client] = getattr(self, 'client', None)
+        server: Optional[Server] = getattr(self, 'server', None)
         if client is not None:
             setattr(self, 'client', None)
             client.close()
@@ -67,17 +33,12 @@ class AsyncTests(IsolatedAsyncioTestCase, Generic[S]):
             setattr(self, 'server', None)
             server.stop()
 
-    async def _recv(self, size: int) -> bytes:
-        loop = asyncio.get_running_loop()
-        return await loop.sock_recv(self.client, size)
-
     async def assertRespond(self, req: bytes, res: bytes):
         """
         """
-        written = self.client.sendto(req, self.addr)
-        read    = await self._recv(8192)
+        await self.client.send(req)
+        read = await self.client.recv(8192)
         self.assertLess(len(req), 8192)
-        self.assertEqual(written, len(req))
         self.assertEqual(read, res)
 
     async def assertEcho(self, echo: bytes):
@@ -85,61 +46,64 @@ class AsyncTests(IsolatedAsyncioTestCase, Generic[S]):
         """
         await self.assertRespond(echo, echo)
 
-    async def test_echo(self):
-        await self.spawn_async(
-            addr=('127.0.0.1', random_port()),
-            factory=EchoSession)
+    async def new_server(self,
+        scls:        Type[Server],
+        ccls:        Type[Client],
+        factory:     SessFactory,
+        force_dgram: bool = False
+    ):
+        self.server = scls(('127.0.0.1', 0), factory)
+        self.client = ccls() \
+            if issubclass(ccls, TcpAsyncClient) else \
+            ccls(force_dgram)
+        await self.server.start()
+        await self.client.connect(self.server.sockname())
 
+    async def test_udp_echo(self):
+        """
+        """
+        await self.new_server(
+            UdpAsyncServer, UdpAsyncClient,
+            SessFactory(EchoSession), True)
         await self.assertEcho(b'hello')
         await self.assertEcho(b'world')
         await self.assertEcho(b'ayylmao')
         await self.assertEcho(b'\x00' * 8191)
         await self.assertEcho(b'bye')
 
-    async def test_args(self):
-        await self.spawn_async(
-            addr=('127.0.0.1', random_port()),
-            factory=ArgsSession,
-            args=(1, 2, 3),
-            kwargs={'a': 'A', 'b': 'B'})
-
-        await self.assertRespond(b'hello', json.dumps({
-            'args':   [1, 2, 3],
-            'kwargs': {'a': 'A', 'b': 'B'},
-            'data':   'hello',
-        }).encode())
-
-class UdpAsyncTests(AsyncTests[UdpAsyncServer]):
-    __test__   = True
-    server_cls = UdpAsyncServer
-
-    async def test_closed(self):
-        await self.spawn_async(
-            addr=('127.0.0.1', random_port()),
-            factory=EchoSession)
-
-        self.client.settimeout(0.25)
-        with self.assertRaises(socket.timeout):
-            await self.assertEcho(b'bye')
-            await self.assertEcho(b'test')
-
-class TcpAsyncTests(AsyncTests[TcpAsyncServer]):
-    __test__   = True
-    server_cls = TcpAsyncServer
-
-    async def test_closed(self):
-        await self.spawn_async(
-            addr=('127.0.0.1', random_port()),
-            factory=EchoSession)
-
+    async def test_tcp_echo(self):
+        """
+        """
+        await self.new_server(
+            TcpAsyncServer, TcpAsyncClient, SessFactory(EchoSession))
+        await self.assertEcho(b'hello')
+        await self.assertEcho(b'world')
+        await self.assertEcho(b'ayylmao')
+        await self.assertEcho(b'\x00' * 8191)
         await self.assertEcho(b'bye')
-        try:
-            await self.assertRespond(b'test', b'')
-        except ConnectionResetError:
-            pass
+        await self.assertRespond(b'test', b'')
 
-class UdpAsyncThreadedTests(UdpAsyncTests):
-    kwargs = {'threads': 0}
+    async def test_udp_echo_async(self):
+        """
+        """
+        await self.new_server(
+            UdpAsyncServer, UdpAsyncClient, SessFactory(AsyncEchoSession))
+        await self.assertEcho(b'hello')
+        await self.assertEcho(b'world')
+        await self.assertEcho(b'ayylmao')
+        await self.assertEcho(b'\x00' * 8191)
+        await self.assertEcho(b'bye')
 
-class TcpAsyncThreadedTests(TcpAsyncTests):
-    kwargs = {'threads': 0}
+    async def test_tcp_echo_async(self):
+        """
+        """
+        await self.new_server(
+            TcpAsyncServer, TcpAsyncClient,
+            SessFactory(AsyncEchoSession), True)
+        await self.assertEcho(b'hello')
+        await self.assertEcho(b'world')
+        await self.assertEcho(b'ayylmao')
+        await self.assertEcho(b'\x00' * 8191)
+        await self.assertEcho(b'bye')
+        await self.assertRespond(b'test', b'')
+

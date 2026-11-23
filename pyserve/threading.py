@@ -5,49 +5,37 @@ import socket
 import socketserver
 from ssl import SSLContext, SSLSocket
 from typing import (
-    Any, Callable, ClassVar, Dict, Generic, Optional, Type, TypeVar, cast)
+    Callable, ClassVar, Generic, Optional, Type, TypeVar, cast)
 from typing_extensions import override
 
 from .abc import (
-    Address, AnyAddr, RawAddr, Session, UdpWriter, Writer, modify_socket)
+    W, Address, AnyAddr, BaseWriter, RawAddr, SessFactory, Session,
+    UdpWriter, Writer, modify_socket)
 
 #** Variables **#
 __all__ = ['UdpThreadServer', 'TcpThreadServer']
 
-W = TypeVar('W', bound=Writer)
 H = TypeVar('H', bound='RequestHandler')
 
 #** Functions **#
 
 def new_handler(
     base:      Type[H],
-    factory:   Type[Session],
-    args:      Optional[tuple]          = None,
-    kwargs:    Optional[Dict[str, Any]] = None,
-    blocksize: int                      = 8192
+    factory:   SessFactory[Session],
+    blocksize: int = 8192
 ) -> Type[H]:
     """
-    spawn new request-handler class w/ configured settings
+    Spawn new request-handler class with configured settings
     """
-    # test factory generation
-    args   = args or ()
-    kwargs = kwargs or {}
-    factory(*args, **kwargs)
-    # generate new request handler
     name   = f'{base.__name__}Instance'
-    newcls = type(name, (base, ), dict(
-        factory=factory,
-        args=args,
-        kwargs=kwargs,
-        blocksize=blocksize,
-    ))
+    newcls = type(name, (base, ), dict(factory=factory, blocksize=blocksize))
     return cast(Type[H], newcls)
 
 #** Classes **#
 
-class ThreadWriter(Writer):
+class ThreadWriter(BaseWriter):
     """
-    Baseclass for threading socket writers
+    Base-class for threading socket writers
     """
     __slots__ = ('addr', 'sock', 'closing')
 
@@ -72,31 +60,28 @@ class ThreadWriter(Writer):
 
 class UdpThreadWriter(UdpWriter, ThreadWriter):
     """
-    Udp implementation for threaded socket writer
+    UDP implementation for threaded socket writer
     """
 
-    def write(self, data: bytes, addr: Optional[AnyAddr] = None) -> int:
-        return self.sock.sendto(data, addr or self.addr)
+    def write(self, data: bytes, addr: Optional[AnyAddr] = None) -> None:
+        self.sock.sendto(data, addr or self.addr)
 
-class TcpThreadWriter(ThreadWriter):
+class TcpThreadWriter(Writer, ThreadWriter):
     """
-    Tcp implementation for threaded socket writer
+    TCP implementation for threaded socket writer
     """
 
     def start_tls(self, context: SSLContext):
         self.sock = context.wrap_socket(self.sock, server_side=True)
 
-    def write(self, data: bytes) -> int:
+    def write(self, data: bytes) -> None:
         self.sock.sendall(data)
-        return len(data)
 
 class RequestHandler(Generic[W], socketserver.BaseRequestHandler):
     """
-    Baseclass request handler implementation for UDP/TCP
+    Base-class request handler implementation for UDP/TCP
     """
-    factory:   ClassVar[Type[Session]]
-    args:      ClassVar[tuple]
-    kwargs:    Dict[str, Any]
+    factory:   ClassVar[SessFactory[Session]]
     blocksize: ClassVar[int]
 
     addr:   Address
@@ -106,7 +91,7 @@ class RequestHandler(Generic[W], socketserver.BaseRequestHandler):
     @override
     def setup(self) -> None:
         self.error   = None
-        self.session = self.factory(*self.args, **self.kwargs)
+        self.session = self.factory.build()
         self.session.connection_made(self.addr, self.writer)
 
     @override
@@ -115,7 +100,7 @@ class RequestHandler(Generic[W], socketserver.BaseRequestHandler):
 
 class UdpHandler(RequestHandler[UdpThreadWriter]):
     """
-    Udp server request handler implementation
+    UDP server request handler implementation
     """
     sock: socket.socket
 
@@ -138,7 +123,7 @@ class UdpHandler(RequestHandler[UdpThreadWriter]):
 
 class TcpHandler(RequestHandler[TcpThreadWriter]):
     """
-    Tcp server request handler implementation
+    TCP server request handler implementation
     """
     sock: socket.socket
 
@@ -165,7 +150,7 @@ class TcpHandler(RequestHandler[TcpThreadWriter]):
 
 class ThreadedMixin(Generic[H], socketserver.ThreadingMixIn):
     """
-    Threaded server mixin tweaks
+    Threaded server Mix-in tweaks
     """
     socket:         socket.socket
     address_family: int
@@ -183,9 +168,15 @@ class ThreadedMixin(Generic[H], socketserver.ThreadingMixIn):
         setattr(self, 'max_packet_size', blocksize)
         setattr(self, 'allow_reuse_port', reuse_port)
 
+    def sockname(self) -> RawAddr:
+        """
+        Retrieve bind address from inner server socket
+        """
+        return self.socket.getsockname()
+
     def start(self):
         """
-        shorthand for binding and activating the server (if not already)
+        Shorthand for binding and activating the server (if not already)
         """
         try:
             self.server_bind()
@@ -196,14 +187,14 @@ class ThreadedMixin(Generic[H], socketserver.ThreadingMixIn):
 
     def stop(self):
         """
-        shutdown serve_forever loop and close socket
+        Shut-down serve_forever loop and close socket
         """
         self.shutdown()
         self._cleanup()
 
     def rebuild_socket(self):
         """
-        rebuild socket to recover from socket failure
+        Rebuild socket to recover from socket failure
         """
         self.socket.close()
         self.socket = socket.socket(self.address_family, self.socket_type)
@@ -211,7 +202,7 @@ class ThreadedMixin(Generic[H], socketserver.ThreadingMixIn):
 
 class UdpThreadServer(ThreadedMixin[UdpHandler], socketserver.UDPServer):
     """
-    Udp threaded session-based server implementation
+    UDP threaded session-based server implementation
     """
     address:         RawAddr
     interface:       Optional[str]
@@ -219,17 +210,15 @@ class UdpThreadServer(ThreadedMixin[UdpHandler], socketserver.UDPServer):
 
     def __init__(self,
         address:           RawAddr,
-        factory:           Type[Session],
-        args:              Optional[tuple]          = None,
-        kwargs:            Optional[Dict[str, Any]] = None,
-        interface:         Optional[str]            = None,
-        reuse_port:        bool                     = False,
-        blocksize:         int                      = 8192,
-        allow_broadcast:   bool                     = False,
-        bind_and_activate: bool                     = True,
+        factory:           SessFactory[Session[UdpWriter]],
+        interface:         Optional[str] = None,
+        reuse_port:        bool          = False,
+        blocksize:         int           = 8192,
+        allow_broadcast:   bool          = False,
+        bind_and_activate: bool          = True,
     ):
         self.address         = address
-        self.handler         = new_handler(UdpHandler, factory, args, kwargs, blocksize)
+        self.handler         = new_handler(UdpHandler, factory)
         self.interface       = interface
         self.allow_broadcast = allow_broadcast
         self._set_classvars(blocksize, reuse_port)
@@ -249,7 +238,7 @@ class UdpThreadServer(ThreadedMixin[UdpHandler], socketserver.UDPServer):
     @override
     def server_bind(self) -> None:
         """
-        additional socket modification controls on server-bind
+        Additional socket modification controls on server-bind
         """
         super().server_bind()
         modify_socket(self.socket, None, self.interface)
@@ -259,7 +248,7 @@ class UdpThreadServer(ThreadedMixin[UdpHandler], socketserver.UDPServer):
     @override
     def get_request(self):
         """
-        respawn socket after socket error to prevent infinite hanging loop
+        Respawn socket after socket error to prevent infinite hanging loop
         """
         try:
             return super().get_request()
@@ -270,9 +259,7 @@ class UdpThreadServer(ThreadedMixin[UdpHandler], socketserver.UDPServer):
     @override
     def serve_forever(self, poll_interval: float = 0.5) -> None:
         """
-        polls server forever until its closed by something else
-
-        :param poll_interval: how often server polls for close
+        Polls server forever until it's closed by something else
         """
         try:
             return super().serve_forever(poll_interval)
@@ -281,7 +268,7 @@ class UdpThreadServer(ThreadedMixin[UdpHandler], socketserver.UDPServer):
 
 class TcpThreadServer(ThreadedMixin[TcpHandler], socketserver.TCPServer):
     """
-    Tcp threaded session-based server implementation
+    TCP threaded session-based server implementation
     """
     address:   RawAddr
     interface: Optional[str]
@@ -290,18 +277,16 @@ class TcpThreadServer(ThreadedMixin[TcpHandler], socketserver.TCPServer):
 
     def __init__(self,
         address:           RawAddr,
-        factory:           Type[Session],
-        args:              Optional[tuple]          = None,
-        kwargs:            Optional[Dict[str, Any]] = None,
-        interface:         Optional[str]            = None,
-        reuse_port:        bool                     = False,
-        blocksize:         int                      = 8192,
-        ssl:               Optional[SSLContext]     = None,
-        timeout:           Optional[float]          = None,
-        bind_and_activate: bool                     = True,
+        factory:           SessFactory[Session[Writer]],
+        interface:         Optional[str]        = None,
+        reuse_port:        bool                 = False,
+        blocksize:         int                  = 8192,
+        ssl:               Optional[SSLContext] = None,
+        timeout:           Optional[float]      = None,
+        bind_and_activate: bool                 = True,
     ):
         self.address   = address
-        self.handler   = new_handler(TcpHandler, factory, args, kwargs, blocksize)
+        self.handler   = new_handler(TcpHandler, factory, blocksize)
         self.interface = interface
         self.ssl       = ssl
         self.timeout   = timeout
@@ -316,14 +301,17 @@ class TcpThreadServer(ThreadedMixin[TcpHandler], socketserver.TCPServer):
         """
         custom server cleanup function
         """
-        self.socket.shutdown(socket.SHUT_RDWR)
+        try:
+            self.socket.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
         self.socket.close()
         self.server_close()
 
     @override
     def server_bind(self):
         """
-        additional socket modification controls on server-bind
+        Additional socket modification controls on server-bind
         """
         super().server_bind()
         modify_socket(self.socket, None, self.interface)
@@ -334,7 +322,7 @@ class TcpThreadServer(ThreadedMixin[TcpHandler], socketserver.TCPServer):
     @override
     def get_request(self):
         """
-        respawn socket after socket error to prevent infinite hanging loop
+        Respawn socket after socket error to prevent infinite hanging loop
         """
         timeout = int(self.timeout) if self.timeout else None
         try:
@@ -350,9 +338,7 @@ class TcpThreadServer(ThreadedMixin[TcpHandler], socketserver.TCPServer):
     @override
     def serve_forever(self, poll_interval: float = 0.5) -> None:
         """
-        polls server forever until its closed by something else
-
-        :param poll_interval: how often server polls for close
+        Polls server forever until it's closed by something else
         """
         try:
             return super().serve_forever(poll_interval)

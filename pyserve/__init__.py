@@ -4,9 +4,11 @@ Unify socket server implementations using session-based model
 from ssl import SSLContext
 from typing import Any, Dict, Optional, Tuple, Type
 
-from .abc import Address, RawAddr, Session, UdpWriter, Writer
-from .threading import UdpThreadServer, TcpThreadServer
-from .transport import UdpAsyncServer, TcpAsyncServer
+from .abc import (
+    Address, AsyncSession, RawAddr, SessFactory, Session, UdpWriter, Writer)
+from .client import AbstractClient, TcpAsyncClient, UdpAsyncClient
+from .threading import TcpThreadServer, UdpThreadServer
+from .transport import TcpAsyncServer, TcpSession, UdpAsyncServer, UdpSession
 
 #** Variables **#
 __all__ = [
@@ -18,8 +20,14 @@ __all__ = [
     'Address',
     'RawAddr',
     'Session',
+    'AsyncSession',
+    'SessFactory',
     'UdpWriter',
     'Writer',
+
+    'AbstractClient',
+    'TcpAsyncClient',
+    'UdpAsyncClient',
 
     'UdpThreadServer',
     'TcpThreadServer',
@@ -31,73 +39,63 @@ __all__ = [
 
 async def listen_udp_async(
     address:         RawAddr,
-    factory:         Type[Session],
-    args:            Optional[Tuple[Any, ...]] = None,
-    kwargs:          Optional[Dict[str, Any]]  = None,
-    interface:       Optional[str]             = None,
-    reuse_port:      bool                      = False,
-    allow_broadcast: bool                      = False,
-    threads:         Optional[int]             = None,
+    factory:         Type[UdpSession],
+    args:            Tuple[Any, ...] = (),
+    kwargs:          Dict[str, Any]  = {},
+    interface:       Optional[str]   = None,
+    reuse_port:      bool            = False,
+    allow_broadcast: bool            = False,
 ) -> None:
     """
     """
     async with UdpAsyncServer(
         address=address,
-        factory=factory,
-        args=args,
-        kwargs=kwargs,
+        factory=SessFactory(factory, *args, **kwargs),
         interface=interface,
         reuse_port=reuse_port,
         allow_broadcast=allow_broadcast,
-        threads=threads,
     ) as server:
         await server.serve_forever()
 
 async def listen_tcp_async(
     address:    RawAddr,
-    factory:    Type[Session],
-    args:       Optional[Tuple[Any, ...]] = None,
-    kwargs:     Optional[Dict[str, Any]]  = None,
-    interface:  Optional[str]             = None,
-    reuse_port: bool                      = False,
-    backlog:    int                       = 100,
-    ssl:        Optional[SSLContext]      = None,
-    timeout:    Optional[int]             = None,
-    threads:    Optional[int]             = None,
+    factory:    Type[TcpSession],
+    args:       Tuple[Any, ...]      = (),
+    kwargs:     Dict[str, Any]       = {},
+    interface:  Optional[str]        = None,
+    reuse_port: bool                 = False,
+    backlog:    int                  = 100,
+    ssl:        Optional[SSLContext] = None,
+    timeout:    Optional[int]        = None,
 ) -> None:
     """
     """
     async with TcpAsyncServer(
         address=address,
-        factory=factory,
-        args=args,
-        kwargs=kwargs,
+        factory=SessFactory(factory, *args, **kwargs),
         interface=interface,
         reuse_port=reuse_port,
         backlog=backlog,
         ssl=ssl,
         timeout=timeout,
-        threads=threads,
     ) as server:
         await server.serve_forever()
 
 def listen_udp_threaded(
     address:         RawAddr,
-    factory:         Type[Session],
-    args:            Optional[Tuple[Any, ...]] = None,
-    kwargs:          Optional[Dict[str, Any]]  = None,
-    interface:       Optional[str]             = None,
-    reuse_port:      bool                      = False,
-    allow_broadcast: bool                      = False,
-    blocksize:       int                       = 8192
+    factory:         Type[Session[UdpWriter]],
+    args:            Tuple[Any, ...] = (),
+    kwargs:          Dict[str, Any]  = {},
+    interface:       Optional[str]   = None,
+    reuse_port:      bool            = False,
+    allow_broadcast: bool            = False,
+    blocksize:       int             = 8192
 ) -> None:
     """
     """
     with UdpThreadServer(
         address=address,
-        factory=factory,
-        args=args,
-        kwargs=kwargs,
+        factory=SessFactory(factory, *args, **kwargs),
         interface=interface,
         blocksize=blocksize,
         reuse_port=reuse_port,
@@ -107,22 +105,20 @@ def listen_udp_threaded(
 
 def listen_tcp_threaded(
     address:    RawAddr,
-    factory:    Type[Session],
-    args:       Optional[Tuple[Any, ...]] = None,
-    kwargs:     Optional[Dict[str, Any]]  = None,
-    interface:  Optional[str]             = None,
-    reuse_port: bool                      = False,
-    blocksize:  int                       = 8192,
-    ssl:        Optional[SSLContext]      = None,
-    timeout:    Optional[int]             = None,
+    factory:    Type[Session[Writer]],
+    args:       Tuple[Any, ...]      = (),
+    kwargs:     Dict[str, Any]       = {},
+    interface:  Optional[str]        = None,
+    reuse_port: bool                 = False,
+    blocksize:  int                  = 8192,
+    ssl:        Optional[SSLContext] = None,
+    timeout:    Optional[int]        = None,
 ) -> None:
     """
     """
     with TcpThreadServer(
         address=address,
-        factory=factory,
-        args=args,
-        kwargs=kwargs,
+        factory=SessFactory(factory, *args, **kwargs),
         interface=interface,
         reuse_port=reuse_port,
         blocksize=blocksize,
