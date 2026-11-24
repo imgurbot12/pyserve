@@ -5,8 +5,9 @@ import socket
 from abc import abstractmethod
 from ssl import SSLContext
 from typing import (
-    Callable, ClassVar, Generic, NamedTuple, Optional, ParamSpec, Protocol, Tuple,
+    Callable, ClassVar, Generic, NamedTuple, Optional, Protocol, Tuple,
     TypeVar, Union)
+from typing_extensions import ParamSpec
 
 #** Variables **#
 __all__ = [

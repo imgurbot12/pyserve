@@ -4,13 +4,14 @@ PyServe Socket Client Utilities
 import socket
 import asyncio
 from abc import abstractmethod
-from typing import Optional, Protocol, Tuple, Union
+from typing import Awaitable, Optional, Protocol, Tuple, TypeVar, Union
 
 from .abc import RawAddr
 
 #** Variables **#
 __all__ = ['AbstractClient', 'TcpAsyncClient', 'UdpAsyncClient']
 
+T     = TypeVar('T')
 Bytes = Union[bytes, bytearray, memoryview]
 
 #** Classes **#
@@ -21,29 +22,38 @@ class AbstractClient(Protocol):
     """
     socket: socket.socket
 
+    async def _wait(self,
+        co: Awaitable[T], timeout: Optional[float] = None) -> T:
+        """
+        Wait until coroutine has completed with timeout control
+        """
+        inner = co if timeout is None else asyncio.wait_for(co, timeout)
+        return await inner
+
     @abstractmethod
     async def connect(self, addr: RawAddr):
         raise NotImplementedError
 
     @abstractmethod
-    async def recv(self, nbytes: int) -> bytes:
+    async def recv(self, nbytes: int, timeout: Optional[float] = None) -> bytes:
         raise NotImplementedError
 
     @abstractmethod
-    async def send(self, data: Bytes) -> None:
+    async def send(self, data: Bytes, timeout: Optional[float] = None) -> None:
         raise NotImplementedError
 
 class TcpAsyncClient(AbstractClient):
     """
     Simple async TCP client implementation
     """
-    __slots__ = ('loop', 'socket', )
+    __slots__ = ('loop', 'socket', 'timeout')
 
     socket: socket.socket
 
-    def __init__(self):
-        self.loop   = asyncio.get_running_loop()
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    def __init__(self, timeout: Optional[float] = None):
+        self.loop    = asyncio.get_running_loop()
+        self.socket  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.timeout = timeout
         self.socket.setblocking(False)
 
     async def connect(self, addr: RawAddr):
@@ -52,17 +62,19 @@ class TcpAsyncClient(AbstractClient):
         """
         await self.loop.sock_connect(self.socket, addr)
 
-    async def recv(self, nbytes: int) -> bytes:
+    async def recv(self, nbytes: int, timeout: Optional[float] = None) -> bytes:
         """
         Receive a response from the TCP server
         """
-        return await self.loop.sock_recv(self.socket, nbytes)
+        task = self.loop.sock_recv(self.socket, nbytes)
+        return await self._wait(task, timeout or self.timeout)
 
-    async def send(self, data: Bytes) -> None:
+    async def send(self, data: Bytes, timeout: Optional[float] = None) -> None:
         """
         Send data to the TCP server
         """
-        await self.loop.sock_sendall(self.socket, data)
+        task = self.loop.sock_sendall(self.socket, data)
+        return await self._wait(task, timeout or self.timeout)
 
     def close(self):
         """
@@ -78,15 +90,16 @@ class UdpAsyncClient(AbstractClient):
     """
     Simple async UDP client implementation
     """
-    __slots__ = ('loop', 'socket', '_addr', '_dgram')
+    __slots__ = ('loop', 'socket', 'timeout', '_addr', '_dgram')
 
-    def __init__(self, _force_dgram: bool = False):
-        self.loop   = asyncio.get_running_loop()
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def __init__(self, timeout: Optional[int] = None, force_dgram: bool = True):
+        self.loop    = asyncio.get_running_loop()
+        self.socket  = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.timeout = timeout
         self.socket.setblocking(False)
         self._addr  = None
         self._dgram = None \
-            if hasattr(self.loop, 'sock_recvfrom') and not _force_dgram else \
+            if hasattr(self.loop, 'sock_recvfrom') and not force_dgram else \
             _UdpClientBackport(self.loop, self.socket)
 
     def _getaddr(self, addr: Optional[RawAddr]) -> RawAddr:
@@ -104,32 +117,37 @@ class UdpAsyncClient(AbstractClient):
         """
         self._addr = addr
 
-    async def send(self, data: Bytes) -> None:
+    async def send(self, data: Bytes, timeout: Optional[float] = None) -> None:
         """
         Send data to default UDP server configured with `connect`
         """
-        await self.sendto(data)
+        await self.sendto(data, timeout=timeout)
 
-    async def recv(self, nbytes: int) -> bytes:
+    async def recv(self, nbytes: int, timeout: Optional[float] = None) -> bytes:
         """
         Receive data from UDP server at the address configured with `connect`
         """
         expected   = self._getaddr(None)
-        data, addr = await self.recvfrom(nbytes)
+        data, addr = await self.recvfrom(nbytes, timeout=timeout)
         if addr is not None and addr != expected:
             raise RuntimeError(f'Unexpected response from address {addr}')
         return data
 
-    async def recvfrom(self, nbytes: int) -> Tuple[bytes, RawAddr]:
+    async def recvfrom(self,
+        nbytes: int, timeout: Optional[float] = None) -> Tuple[bytes, RawAddr]:
         """
         Wait for an inbound message over UDP socket connection
         """
         task = self.loop.sock_recvfrom(self.socket, nbytes) \
             if self._dgram is None else \
             self._dgram.recvfrom()
-        return await task
+        return await self._wait(task, timeout or self.timeout)
 
-    async def sendto(self, data: Bytes, addr: Optional[RawAddr] = None) -> None:
+    async def sendto(self,
+        data:    Bytes,
+        addr:    Optional[RawAddr] = None,
+        timeout: Optional[float]   = None,
+    ) -> None:
         """
         Send a message over the UDP socket with the given bytes and address
         """
@@ -137,7 +155,7 @@ class UdpAsyncClient(AbstractClient):
         task = self.loop.sock_sendto(self.socket, data, addr) \
             if self._dgram is None else \
             self._dgram.sendto(data, addr)
-        await task
+        await self._wait(task, timeout or self.timeout)
 
     def close(self):
         """
@@ -159,7 +177,7 @@ class _UdpClientBackport:
 
     socket: socket.socket
     tport:  Optional[asyncio.DatagramTransport]
-    proto:  Optional[_UdpProtocol]
+    proto:  Optional['_UdpProtocol']
 
     def __init__(self, loop: asyncio.AbstractEventLoop, socket: socket.socket):
         self.loop   = loop
@@ -167,7 +185,7 @@ class _UdpClientBackport:
         self.tport  = None
         self.proto  = None
 
-    async def _connect(self) -> Tuple[asyncio.DatagramTransport, _UdpProtocol]:
+    async def _connect(self) -> Tuple[asyncio.DatagramTransport, '_UdpProtocol']:
         """
         Establish UDP datagram endpoint used to send and receive data
         """

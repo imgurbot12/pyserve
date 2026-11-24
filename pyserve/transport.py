@@ -135,6 +135,8 @@ class UdpProtocol(BaseProtocol, asyncio.DatagramProtocol):
             asyncio.create_task(cast(Coroutine, task))
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
+        if not hasattr(self, 'session'):
+            self.session = self.factory.build()
         task = self.session.connection_lost(exc)
         if self.factory.is_async:
             asyncio.create_task(task)

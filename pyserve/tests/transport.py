@@ -50,12 +50,12 @@ class TransportTests(IsolatedAsyncioTestCase):
         scls:        Type[Server],
         ccls:        Type[Client],
         factory:     SessFactory,
-        force_dgram: bool = False
+        force_dgram: bool = True
     ):
         self.server = scls(('127.0.0.1', 0), factory)
         self.client = ccls() \
             if issubclass(ccls, TcpAsyncClient) else \
-            ccls(force_dgram)
+            ccls(force_dgram=force_dgram)
         await self.server.start()
         await self.client.connect(self.server.sockname())
 
@@ -64,7 +64,7 @@ class TransportTests(IsolatedAsyncioTestCase):
         """
         await self.new_server(
             UdpAsyncServer, UdpAsyncClient,
-            SessFactory(EchoSession), True)
+            SessFactory(EchoSession), False)
         await self.assertEcho(b'hello')
         await self.assertEcho(b'world')
         await self.assertEcho(b'ayylmao')
@@ -99,7 +99,7 @@ class TransportTests(IsolatedAsyncioTestCase):
         """
         await self.new_server(
             TcpAsyncServer, TcpAsyncClient,
-            SessFactory(AsyncEchoSession), True)
+            SessFactory(AsyncEchoSession), False)
         await self.assertEcho(b'hello')
         await self.assertEcho(b'world')
         await self.assertEcho(b'ayylmao')
