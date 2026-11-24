@@ -5,6 +5,7 @@ import socket
 import asyncio
 from abc import abstractmethod
 from typing import Awaitable, Optional, Protocol, Tuple, TypeVar, Union
+from typing_extensions import Self
 
 from .abc import RawAddr
 
@@ -21,6 +22,12 @@ class AbstractClient(Protocol):
     Abstract async socket client
     """
     socket: socket.socket
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_):
+        self.close()
 
     async def _wait(self,
         co: Awaitable[T], timeout: Optional[float] = None) -> T:
@@ -40,6 +47,10 @@ class AbstractClient(Protocol):
 
     @abstractmethod
     async def send(self, data: Bytes, timeout: Optional[float] = None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close(self):
         raise NotImplementedError
 
 class TcpAsyncClient(AbstractClient):
@@ -80,6 +91,8 @@ class TcpAsyncClient(AbstractClient):
         """
         Close socket connection and client
         """
+        if self.socket._closed:
+            return
         try:
             self.socket.shutdown(socket.SHUT_RDWR)
         except:
@@ -161,6 +174,8 @@ class UdpAsyncClient(AbstractClient):
         """
         Close the client connection to server
         """
+        if self.socket._closed:
+            return
         self.socket.close()
         if self._dgram is not None:
             self._dgram.close()
