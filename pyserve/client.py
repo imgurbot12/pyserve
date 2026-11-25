@@ -105,7 +105,7 @@ class UdpAsyncClient(AbstractClient):
     """
     __slots__ = ('loop', 'socket', 'timeout', '_addr', '_dgram')
 
-    def __init__(self, timeout: Optional[int] = None, force_dgram: bool = True):
+    def __init__(self, timeout: Optional[float] = None, force_dgram: bool = True):
         self.loop    = asyncio.get_running_loop()
         self.socket  = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.timeout = timeout
