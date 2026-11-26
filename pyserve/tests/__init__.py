@@ -6,7 +6,7 @@ from typing import Optional, Union
 from ..abc import Address, AsyncSession, Session, UdpWriter, Writer
 
 #** Variables **#
-__all__ = ['TransportTests', 'ThreadingTests']
+__all__ = ['TransportTests', 'ThreadingTests', 'UtilTests']
 
 #** Classes **#
 
@@ -35,3 +35,4 @@ class AsyncEchoSession(AsyncSession):
 #** Imports **#
 from .transport import TransportTests
 from .threading import ThreadingTests
+from .utils import UtilTests
