@@ -5,7 +5,7 @@ import time
 import asyncio
 from unittest import IsolatedAsyncioTestCase
 
-from ..utils import SingleFlight
+from ..utils import FlightSrc, SingleFlight
 
 #** Variables **#
 __all__ = ['UtilTests']
@@ -24,12 +24,15 @@ class UtilTests(IsolatedAsyncioTestCase):
         flight  = SingleFlight()
         start   = time.time()
         results = await asyncio.gather(
-            flight.do('key', task()),
-            flight.do('key', task()),
-            flight.do('key', task()),
+            flight.do_labeled('key', task()),
+            flight.do_labeled('key', task()),
+            flight.do_labeled('key', task()),
         )
         diff = time.time() - start
         self.assertLess(diff, 0.2)
         self.assertEqual(len(results), 3)
-        self.assertIs(results[0], results[1])
-        self.assertIs(results[1], results[2])
+        self.assertEqual(results[0][1], FlightSrc.LEADER)
+        self.assertEqual(results[1][1], FlightSrc.FOLLOWER)
+        self.assertEqual(results[2][1], FlightSrc.FOLLOWER)
+        self.assertIs(results[0][0], results[1][0])
+        self.assertIs(results[1][0], results[2][0])

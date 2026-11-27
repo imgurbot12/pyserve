@@ -2,14 +2,23 @@
 PyServe Server Utilities
 """
 import asyncio
-from typing import Coroutine, Dict, Optional, TypeVar
+from enum import Enum
+from typing import Coroutine, Dict, Optional, Tuple, TypeVar
 
 #** Variables **#
-__all__ = ['SingleFlight']
+__all__ = ['FlightSrc', 'SingleFlight']
 
 T = TypeVar('T')
 
 #** Classes **#
+
+class FlightSrc(int, Enum):
+    """
+    Labels Single-Flight result based on source
+    """
+    LEADER   = 0
+    FOLLOWER = 1
+    RETRIED  = 2
 
 class SingleFlight:
     """
@@ -24,8 +33,11 @@ class SingleFlight:
         self.cache: Dict[str, asyncio.Future] = {}
         self.lock = asyncio.Lock()
 
-    async def _wait(self, call: Coroutine[None, None, T],
-        future: asyncio.Future, timeout: Optional[float] = None) -> T:
+    async def _wait(self,
+        call:    Coroutine[None, None, T],
+        future:  asyncio.Future,
+        timeout: Optional[float] = None,
+    ) -> Tuple[T, FlightSrc]:
         """
         Wait for task to complete with optional timeout
         Should the timeout be reached, it results to spawning its own task
@@ -34,12 +46,15 @@ class SingleFlight:
         try:
             result = await task
             call.close() # cancel coroutine
-            return result
+            return result, FlightSrc.FOLLOWER
         except asyncio.TimeoutError:
-            return await call
+            return await call, FlightSrc.RETRIED
 
-    async def do(self, key: str,
-        call: Coroutine[None, None, T], timeout: Optional[float] = None) -> T:
+    async def do_labeled(self,
+        key:     str,
+        call:    Coroutine[None, None, T],
+        timeout: Optional[float] = None
+    ) -> Tuple[T, FlightSrc]:
         """
         Spawn single-flight task or wait for an existing task to complete.
 
@@ -66,4 +81,18 @@ class SingleFlight:
         finally:
             async with self.lock:
                 self.cache.pop(key, None)
+        return result, FlightSrc.LEADER
+
+    async def do(self,
+        key:     str,
+        call:    Coroutine[None, None, T],
+        timeout: Optional[float] = None
+    ) -> T:
+        """
+        Spawn single-flight task or wait for an existing task to complete.
+
+        Uses the key to determine if a job already exists and manage the cache.
+        The timeout only applies for secondary tasks waiting on leader.
+        """
+        result, _ = await self.do_labeled(key, call, timeout)
         return result
